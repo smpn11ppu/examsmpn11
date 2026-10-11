@@ -61,7 +61,7 @@ if (fs.existsSync(clientDist)) {
   });
 }
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`===============================================`);
   console.log(` CBTKU Backend Server running on port ${PORT}`);
   console.log(` Health check: http://localhost:${PORT}/api/health`);
