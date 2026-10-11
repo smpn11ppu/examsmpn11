@@ -3,11 +3,17 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const db = require('../db');
+const { dbAvailable } = require('../db');
 const { JWT_SECRET, authenticate, logAudit, rateLimiter } = require('../middleware/auth');
 
 // POST /api/auth/login
 router.post('/login', rateLimiter(15, 60000), (req, res) => {
+  if (!db || !dbAvailable) {
+    console.error('❌ DB not available for login');
+    return res.status(503).json({ error: 'Database not available in this environment' });
+  }
   const { username, password } = req.body;
+  // duplicate removed
   if (!username || !password) {
     return res.status(400).json({ error: 'Username dan password wajib diisi.' });
   }

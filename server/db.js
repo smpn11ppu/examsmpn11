@@ -1,14 +1,31 @@
-const { DatabaseSync } = require('node:sqlite');
+const { DatabaseSync, OPEN_READONLY, OPEN_READWRITE, OPEN_CREATE } = require('node:sqlite');
 const path = require('path');
 const fs = require('fs');
 
-const dataDir = path.join(__dirname, '..', 'data');
+// Resolve the absolute data directory relative to the repository root.
+// In Vercel the repo is bundled, so we use process.cwd() as a reliable base.
+const dataDir = path.join(process.cwd(), 'data');
 if (!fs.existsSync(dataDir)) {
+  // In production this should already exist; create only in dev.
   fs.mkdirSync(dataDir, { recursive: true });
 }
 
 const dbPath = path.join(dataDir, 'cbtku.sqlite');
-const db = new DatabaseSync(dbPath);
+let db;
+let dbAvailable = true;
+try {
+  const options = process.env.NODE_ENV === 'production'
+    ? { readonly: true }
+    : { readonly: false };
+  db = new DatabaseSync(dbPath, options);
+} catch (e) {
+  dbAvailable = false;
+  console.error('❌ Failed to open SQLite database at', dbPath, '-', e.message);
+}
+
+// Export both the DB instance (may be undefined) and a flag.
+module.exports = db;
+module.exports.dbAvailable = dbAvailable;
 
 // Enable foreign keys & WAL mode
 db.exec('PRAGMA foreign_keys = ON;');
