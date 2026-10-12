@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import '../../exam-workstation.css';
 import {
   Clock, CheckCircle2, AlertTriangle, ShieldAlert,
   ChevronLeft, ChevronRight, Bookmark, Send, WifiOff,
@@ -10,6 +11,14 @@ interface WorkstationProps {
   attemptId: number;
   onFinishExam: (attemptId: number) => void;
 }
+
+const QUESTION_TYPE_LABELS: Record<string, string> = {
+  single_choice: 'Pilihan Ganda',
+  multiple_choice: 'Pilihan Ganda Kompleks',
+  true_false: 'Benar / Salah',
+  matching: 'Menjodohkan',
+  essay: 'Esai',
+};
 
 export const ExamWorkstation: React.FC<WorkstationProps> = ({ attemptId, onFinishExam }) => {
   const { token } = useAuth();
@@ -408,7 +417,9 @@ export const ExamWorkstation: React.FC<WorkstationProps> = ({ attemptId, onFinis
 
   if (loading) {
     return (
-      <div style={{ textAlign: 'center', padding: '6rem 0', color: 'var(--text-muted)' }}>
+      <div className="school-exam-loading" role="status">
+        <div className="school-exam-loading-mark"><Clock size={22} /></div>
+        <h2>Menyiapkan ruang ujian</h2>
         <p>Memuat lembar soal dan menyinkronkan status dengan server...</p>
       </div>
     );
@@ -418,33 +429,26 @@ export const ExamWorkstation: React.FC<WorkstationProps> = ({ attemptId, onFinis
   // This is intentionally returned before all question controls are rendered.
   if (isLocked || showViolationModal) {
     return (
-      <div role="dialog" aria-modal="true" aria-labelledby="integrity-lock-title" style={{
-        position: 'fixed', inset: 0, zIndex: 2147483000, background: 'var(--bg-primary)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem',
-        overflowY: 'auto', userSelect: 'none'
-      }}>
-        <div style={{ width: '100%', maxWidth: '520px', borderRadius: '1rem', padding: '2rem',
-          background: 'var(--bg-secondary)', border: '1px solid var(--danger-border)',
-          boxShadow: '0 20px 70px rgba(0,0,0,.35)', textAlign: 'center' }}>
-          <ShieldAlert size={44} color="var(--danger)" style={{ marginBottom: '1rem' }} />
-          <h1 id="integrity-lock-title" style={{ color: 'var(--danger)', fontSize: '1.35rem', marginBottom: '.75rem' }}>
+      <div className="school-exam-lock-screen" role="dialog" aria-modal="true" aria-labelledby="integrity-lock-title">
+        <div className="school-exam-lock-card">
+          <div className="school-exam-lock-icon"><ShieldAlert size={34} /></div>
+          <h1 id="integrity-lock-title" className="school-exam-lock-title">
             Ujian Dikunci — Perlu Token Pengawas
           </h1>
-          <p style={{ color: 'var(--text-main)', marginBottom: '1rem' }}>{lastViolationMsg || 'Pelanggaran integritas terdeteksi.'}</p>
-          <p style={{ color: 'var(--text-muted)', fontSize: '.9rem', marginBottom: '1.25rem' }}>
+          <p className="school-exam-lock-reason">{lastViolationMsg || 'Pelanggaran integritas terdeteksi.'}</p>
+          <p className="school-exam-lock-description">
             Anda tidak dapat melihat atau mengerjakan soal, menyimpan jawaban, atau mengumpulkan ujian sampai pengawas memberikan token pemulihan yang masih aktif. Waktu ujian tetap berjalan.
           </p>
-          {lockSyncStatus === 'syncing' && <p role="status" style={{ color: 'var(--warning)' }}>Mengunci sesi di server...</p>}
-          {lockSyncStatus === 'failed' && <button type="button" onClick={retryViolationLock} className="btn btn-secondary" style={{ width: '100%', marginBottom: '1rem' }}>Coba sinkronkan kunci ke server</button>}
-          {unlockError && <div role="alert" style={{ color: 'var(--danger)', fontSize: '.85rem', marginBottom: '1rem' }}>{unlockError}</div>}
+          {lockSyncStatus === 'syncing' && <p role="status" className="school-exam-lock-status">Mengunci sesi di server...</p>}
+          {lockSyncStatus === 'failed' && <button type="button" onClick={retryViolationLock} className="btn btn-secondary school-exam-lock-retry"><RotateCcw size={15} /> Coba sinkronkan kunci ke server</button>}
+          {unlockError && <div role="alert" className="school-exam-lock-error">{unlockError}</div>}
           {lockSyncStatus === 'locked' && (
             <form onSubmit={handleUnlockAttempt}>
-              <label htmlFor="supervisor-recovery-token" className="form-label" style={{ display: 'block', textAlign: 'left' }}>Token pemulihan dari pengawas</label>
-              <input id="supervisor-recovery-token" type="text" className="form-control" value={unlockToken}
+              <label htmlFor="supervisor-recovery-token" className="form-label school-exam-lock-label">Token pemulihan dari pengawas</label>
+              <input id="supervisor-recovery-token" type="text" className="form-control school-exam-lock-input" value={unlockToken}
                 onChange={e => setUnlockToken(e.target.value.replace(/\s+/g, '').slice(0, 6).toUpperCase())}
-                placeholder="Masukkan 6 digit token" maxLength={6} autoComplete="one-time-code" autoFocus disabled={unlocking}
-                style={{ textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: '1.35rem', letterSpacing: '.3em', marginBottom: '.75rem' }} />
-              <button type="submit" disabled={unlocking || unlockToken.trim().length !== 6} className="btn btn-primary" style={{ width: '100%' }}>
+                placeholder="Masukkan 6 digit token" maxLength={6} autoComplete="one-time-code" autoFocus disabled={unlocking} />
+              <button type="submit" disabled={unlocking || unlockToken.trim().length !== 6} className="btn btn-primary school-exam-lock-submit">
                 {unlocking ? 'Memverifikasi token...' : 'Verifikasi token & lanjutkan'}
               </button>
             </form>
@@ -473,38 +477,21 @@ export const ExamWorkstation: React.FC<WorkstationProps> = ({ attemptId, onFinis
   const unansweredCount = questions.length - answeredCount;
 
   return (
-    <div style={{
-      minHeight: '100vh',
-      display: 'flex',
-      flexDirection: 'column',
-      background: 'var(--bg-primary)',
-      userSelect: 'none'
-    }}>
-      {/* Top Workstation Header Bar */}
-      <header style={{
-        padding: '0.75rem 1.75rem',
-        background: 'var(--bg-secondary)',
-        borderBottom: '1px solid var(--border-subtle)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        position: 'sticky',
-        top: 0,
-        zIndex: 40
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          <div>
-            <div style={{ fontWeight: 800, fontSize: '1rem', color: 'var(--text-main)' }}>
-              {examInfo?.exam_title}
-            </div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-              {examInfo?.subject_name} &bull; Soal {currentIndex + 1} dari {questions.length}
+    <div className="school-exam-root">
+      {/* Header: exam identity, saving state, timer, and deliberate submit action */}
+      <header className="school-exam-header">
+        <div className="school-exam-title-block">
+          <img className="school-exam-brand-mark" src="/logo-smpn11-ppu.jpg" alt="Logo SMP Negeri 11 PPU" />
+          <div className="school-exam-title-copy">
+            <div className="school-exam-title">{examInfo?.exam_title || 'Ujian'}</div>
+            <div className="school-exam-subtitle">
+              {examInfo?.subject_name || 'Mata pelajaran'} <span aria-hidden="true">&bull;</span> Soal {currentIndex + 1} dari {questions.length}
             </div>
           </div>
         </div>
 
-        {/* Center: Autosave Status Indicator */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        {/* Autosave Status Indicator */}
+        <div className="school-exam-save-status" aria-live="polite">
           {autosaveStatus === 'saving' && (
             <div className="autosave-pill autosave-saving">
               <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#818cf8', animation: 'spin 1s infinite' }} />
@@ -514,6 +501,7 @@ export const ExamWorkstation: React.FC<WorkstationProps> = ({ attemptId, onFinis
           {autosaveStatus === 'saved' && (
             <div className="autosave-pill autosave-saved">
               <CheckCircle2 size={13} color="var(--success)" />
+              <Wifi size={13} color="var(--success)" />
               <span>Tersimpan {lastSavedTime ? `(${lastSavedTime})` : 'di server'}</span>
             </div>
           )}
@@ -525,14 +513,15 @@ export const ExamWorkstation: React.FC<WorkstationProps> = ({ attemptId, onFinis
           )}
         </div>
 
-        {/* Right: Server Countdown Timer & Finish Button */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+        {/* Countdown Timer & Finish Button */}
+        <div className="school-exam-actions">
           <div className={`timer-box ${remainingSeconds < 300 ? 'urgent' : ''}`} title="Waktu tersisa divalidasi oleh server">
             <Clock size={18} color={remainingSeconds < 300 ? 'var(--danger)' : 'var(--primary)'} />
             <span>{formatTime(remainingSeconds)}</span>
           </div>
 
           <button
+            type="button"
             onClick={() => setShowSubmitModal(true)}
             className="btn btn-primary btn-sm"
             style={{ fontWeight: 700 }}
@@ -544,66 +533,24 @@ export const ExamWorkstation: React.FC<WorkstationProps> = ({ attemptId, onFinis
       </header>
 
       {/* Main Examination Layout: Question View + Side Navigator */}
-      <div style={{
-        flex: 1,
-        display: 'flex',
-        padding: '1.5rem',
-        gap: '1.5rem',
-        maxWidth: '1440px',
-        width: '100%',
-        margin: '0 auto'
-      }}>
-        {/* Left: Question Card & Answering Area */}
-        <main style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-          <div className="glass-panel" style={{
-            flex: 1,
-            padding: '2rem',
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'space-between'
-          }}>
-            {/* Question Header */}
-            <div>
-              <div style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                paddingBottom: '1rem',
-                borderBottom: '1px solid var(--border-subtle)',
-                marginBottom: '1.5rem'
-              }}>
+      <div className="school-exam-layout">
+        {/* Main question and answer area */}
+        <main className="school-exam-main">
+          <div className="glass-panel school-exam-question-card">
+            <div className="school-exam-question-body">
+              {/* Question Header */}
+              <div className="school-exam-question-toolbar">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-                  <span style={{
-                    width: '32px',
-                    height: '32px',
-                    borderRadius: 'var(--radius-md)',
-                    background: 'var(--primary-gradient)',
-                    color: '#ffffff',
-                    fontWeight: 800,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: '0.95rem'
-                  }}>
+                  <span className="school-exam-question-number" aria-label={`Nomor soal ${currentIndex + 1}`}>
                     {currentIndex + 1}
                   </span>
                   <span className="badge badge-info" style={{ textTransform: 'capitalize' }}>
-                    {currentQ.type.replace('_', ' ')}
+                    {QUESTION_TYPE_LABELS[String(currentQ.type)] || String(currentQ.type).replace(/_/g, ' ')}
                   </span>
                 </div>
 
                 {/* Flag Question (Ragu-ragu) */}
-                <label style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                  padding: '0.35rem 0.75rem',
-                  borderRadius: 'var(--radius-full)',
-                  background: isFlagged ? 'var(--warning-bg)' : 'var(--bg-tertiary)',
-                  border: `1px solid ${isFlagged ? 'var(--warning-border)' : 'var(--border-subtle)'}`,
-                  cursor: 'pointer',
-                  transition: 'all 0.2s'
-                }}>
+                <label className={`school-exam-flag-label ${isFlagged ? 'is-flagged' : ''}`}>
                   <input
                     type="checkbox"
                     checked={isFlagged}
@@ -611,31 +558,24 @@ export const ExamWorkstation: React.FC<WorkstationProps> = ({ attemptId, onFinis
                     style={{ width: '15px', height: '15px', cursor: 'pointer' }}
                   />
                   <Bookmark size={14} color={isFlagged ? 'var(--warning)' : 'var(--text-muted)'} />
-                  <span style={{ fontSize: '0.75rem', fontWeight: 600, color: isFlagged ? 'var(--warning)' : 'var(--text-muted)' }}>
+                  <span className="school-exam-flag-text">
                     Ragu-ragu
                   </span>
                 </label>
               </div>
 
               {/* Question Text */}
-              <div style={{
-                fontSize: '1.125rem',
-                lineHeight: 1.6,
-                fontWeight: 600,
-                color: 'var(--text-main)',
-                marginBottom: '1.5rem',
-                whiteSpace: 'pre-wrap'
-              }}>
+              <div className="school-exam-question-text">
                 {currentQ.question_text}
               </div>
 
               {/* Optional Question Image */}
               {currentQ.image_url && (
-                <div style={{ marginBottom: '1.5rem', textAlign: 'center' }}>
+                <div className="school-exam-question-image">
                   <img
                     src={currentQ.image_url}
                     alt="Ilustrasi soal"
-                    style={{ maxWidth: '100%', maxHeight: '280px', borderRadius: 'var(--radius-md)' }}
+                    className="school-exam-image"
                   />
                 </div>
               )}
@@ -654,7 +594,7 @@ export const ExamWorkstation: React.FC<WorkstationProps> = ({ attemptId, onFinis
                         onClick={() => triggerAutosave(currentQ.id, opt.option_key, isFlagged)}
                       >
                         <div className="option-badge">{opt.display_key || opt.option_key}</div>
-                        <div style={{ fontSize: '0.95rem', color: 'var(--text-main)', paddingTop: '2px' }}>
+                        <div className="school-exam-option-text">
                           {opt.option_text}
                         </div>
                       </div>
@@ -666,7 +606,7 @@ export const ExamWorkstation: React.FC<WorkstationProps> = ({ attemptId, onFinis
               {/* 2. MULTIPLE CHOICE (Pilihan Ganda Kompleks) */}
               {currentQ.type === 'multiple_choice' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>
+                  <div className="school-exam-instruction">
                     * Anda dapat memilih lebih dari satu jawaban yang benar:
                   </div>
                   {currentQ.options?.map((opt: any) => {
@@ -690,7 +630,7 @@ export const ExamWorkstation: React.FC<WorkstationProps> = ({ attemptId, onFinis
                           readOnly
                           style={{ width: '18px', height: '18px', marginTop: '4px', cursor: 'pointer' }}
                         />
-                        <div style={{ fontSize: '0.95rem', color: 'var(--text-main)' }}>
+                        <div className="school-exam-option-text">
                           {opt.option_text}
                         </div>
                       </div>
@@ -777,15 +717,14 @@ export const ExamWorkstation: React.FC<WorkstationProps> = ({ attemptId, onFinis
 
               {/* 5. ESSAY (Esai) */}
               {currentQ.type === 'essay' && (
-                <div style={{ marginTop: '1rem' }}>
+                <div className="school-exam-essay-wrap">
                   <textarea
-                    className="form-control"
-                    style={{ minHeight: '180px', fontSize: '0.95rem', lineHeight: 1.6 }}
+                    className="form-control school-exam-essay-answer"
                     placeholder="Tuliskan lembar jawaban esai Anda di sini secara runut dan jelas..."
                     value={currentAnswer || ''}
                     onChange={e => triggerAutosave(currentQ.id, e.target.value, isFlagged)}
                   />
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-faint)', marginTop: '0.4rem', textAlign: 'right' }}>
+                  <div className="school-exam-word-count">
                     {currentAnswer ? String(currentAnswer).trim().split(/\s+/).filter(Boolean).length : 0} Kata
                   </div>
                 </div>
@@ -793,15 +732,10 @@ export const ExamWorkstation: React.FC<WorkstationProps> = ({ attemptId, onFinis
             </div>
 
             {/* Question Navigation Controls (Bawah) */}
-            <div style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              marginTop: '2.5rem',
-              paddingTop: '1.25rem',
-              borderTop: '1px solid var(--border-subtle)'
-            }}>
+            <div className="school-exam-question-controls">
               <button
+                type="button"
+                aria-label="Ke soal sebelumnya"
                 disabled={currentIndex === 0}
                 onClick={() => setCurrentIndex(prev => prev - 1)}
                 className="btn btn-secondary"
@@ -810,12 +744,12 @@ export const ExamWorkstation: React.FC<WorkstationProps> = ({ attemptId, onFinis
                 <span>Sebelumnya</span>
               </button>
 
-              <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600 }}>
-                {currentIndex + 1} / {questions.length}
-              </span>
+              <span className="school-exam-control-counter">Soal {currentIndex + 1} dari {questions.length}</span>
 
               {currentIndex < questions.length - 1 ? (
                 <button
+                  type="button"
+                  aria-label="Ke soal berikutnya"
                   onClick={() => setCurrentIndex(prev => prev + 1)}
                   className="btn btn-primary"
                 >
@@ -824,6 +758,7 @@ export const ExamWorkstation: React.FC<WorkstationProps> = ({ attemptId, onFinis
                 </button>
               ) : (
                 <button
+                  type="button"
                   onClick={() => setShowSubmitModal(true)}
                   className="btn btn-success"
                 >
@@ -835,39 +770,42 @@ export const ExamWorkstation: React.FC<WorkstationProps> = ({ attemptId, onFinis
           </div>
         </main>
 
-        {/* Right Sidebar: Number Grid Navigation */}
-        <aside style={{ width: '280px', flexShrink: 0 }}>
-          <div className="glass-panel" style={{ padding: '1.25rem' }}>
-            <h3 style={{ fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.75rem' }}>
-              Navigasi Soal
-            </h3>
+        {/* Question navigation: progress, legend, and direct question access */}
+        <aside className="school-exam-sidebar">
+          <div className="glass-panel school-exam-nav-panel">
+            <div className="school-exam-nav-heading">
+              <div>
+                <h3><HelpCircle size={16} aria-hidden="true" /> Navigasi soal</h3>
+                <p>Pilih nomor untuk berpindah.</p>
+              </div>
+              <span className="school-exam-nav-count">{answeredCount}/{questions.length}</span>
+            </div>
+            <div className="school-exam-progress-track" role="progressbar" aria-label="Kemajuan menjawab soal" aria-valuemin={0} aria-valuemax={questions.length} aria-valuenow={answeredCount}>
+              <span style={{ width: `${questions.length ? (answeredCount / questions.length) * 100 : 0}%` }} />
+            </div>
+            <div className="school-exam-progress-caption">
+              <span>{answeredCount} terjawab</span>
+              <span>{unansweredCount} belum dijawab</span>
+            </div>
 
             {/* Legend */}
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: '1fr 1fr',
-              gap: '0.4rem',
-              fontSize: '0.7rem',
-              marginBottom: '1rem',
-              paddingBottom: '0.75rem',
-              borderBottom: '1px solid var(--border-subtle)'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                <span style={{ width: '10px', height: '10px', borderRadius: '3px', background: '#059669' }} />
+            <div className="school-exam-nav-legend">
+              <div className="school-exam-legend-item">
+                <span className="school-exam-legend-dot answered" />
                 <span>Sudah Dijawab</span>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                <span style={{ width: '10px', height: '10px', borderRadius: '3px', background: '#d97706' }} />
+              <div className="school-exam-legend-item">
+                <span className="school-exam-legend-dot flagged" />
                 <span>Ragu-ragu</span>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                <span style={{ width: '10px', height: '10px', borderRadius: '3px', background: 'var(--bg-tertiary)', border: '1px solid var(--border-subtle)' }} />
+              <div className="school-exam-legend-item">
+                <span className="school-exam-legend-dot unanswered" />
                 <span>Belum Dijawab</span>
               </div>
             </div>
 
             {/* Grid of numbers */}
-            <div className="question-nav-grid" style={{ maxHeight: 'calc(100vh - 360px)', overflowY: 'auto' }}>
+            <div className="question-nav-grid school-exam-question-grid" aria-label="Daftar nomor soal">
               {questions.map((q, idx) => {
                 const ansObj = answers[q.id];
                 const hasAnswer = ansObj && ansObj.value !== undefined && ansObj.value !== null && ansObj.value !== '' && (Array.isArray(ansObj.value) ? ansObj.value.length > 0 : true);
@@ -881,8 +819,12 @@ export const ExamWorkstation: React.FC<WorkstationProps> = ({ attemptId, onFinis
                 return (
                   <button
                     key={q.id}
+                    type="button"
                     onClick={() => setCurrentIndex(idx)}
                     className={`nav-btn ${statusClass} ${isActive ? 'active' : ''}`}
+                    aria-label={`Soal ${idx + 1}, ${flagged ? 'ragu-ragu' : hasAnswer ? 'sudah dijawab' : 'belum dijawab'}${isActive ? ', sedang dibuka' : ''}`}
+                    aria-current={isActive ? 'step' : undefined}
+                    aria-pressed={isActive}
                   >
                     <span>{idx + 1}</span>
                   </button>
@@ -952,7 +894,7 @@ export const ExamWorkstation: React.FC<WorkstationProps> = ({ attemptId, onFinis
               <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginBottom: '1rem' }}>
                 Token berubah otomatis sesuai interval yang ditetapkan administrator. Jika token sudah berubah, minta kode terbaru kepada pengawas.
               </p>
-              <button type="submit" disabled={unlocking || unlockToken.trim().length !== 6} className="btn btn-primary" style={{ width: '100%' }}>
+              <button type="submit" disabled={unlocking || unlockToken.trim().length !== 6} className="btn btn-primary school-exam-lock-submit">
                 {unlocking ? 'Memverifikasi token...' : 'Verifikasi & Buka Kunci Ujian'}
               </button>
             </form>
@@ -962,57 +904,42 @@ export const ExamWorkstation: React.FC<WorkstationProps> = ({ attemptId, onFinis
 
       {/* --- SUBMIT CONFIRMATION MODAL --- */}
       {showSubmitModal && (
-        <div className="modal-overlay">
-          <div className="modal-content animate-scale-in" style={{ maxWidth: '480px' }}>
+        <div className="modal-overlay school-exam-submit-overlay">
+          <div className="modal-content animate-scale-in school-exam-submit-modal">
             <div className="modal-header">
               <h2 className="modal-title">Konfirmasi Selesai Ujian</h2>
               <button onClick={() => setShowSubmitModal(false)} className="modal-close">&times;</button>
             </div>
 
-            <div style={{ marginBottom: '1.5rem' }}>
-              <p style={{ fontSize: '0.875rem', marginBottom: '1rem' }}>
+            <div className="school-exam-submit-content">
+              <p className="school-exam-submit-copy">
                 Apakah Anda yakin ingin mengakhiri sesi pengerjaan ujian ini? Periksa kembali rekapitulasi jawaban Anda:
               </p>
 
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(3, 1fr)',
-                gap: '0.75rem',
-                textAlign: 'center',
-                padding: '1rem',
-                background: 'var(--bg-tertiary)',
-                borderRadius: 'var(--radius-md)'
-              }}>
+              <div className="school-exam-submit-summary">
                 <div>
-                  <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--success)' }}>{answeredCount}</div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Sudah Dijawab</div>
+                  <div className="school-exam-summary-value answered">{answeredCount}</div>
+                  <div className="school-exam-summary-label">Sudah Dijawab</div>
                 </div>
                 <div>
-                  <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--warning)' }}>{flaggedCount}</div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Ragu-ragu</div>
+                  <div className="school-exam-summary-value flagged">{flaggedCount}</div>
+                  <div className="school-exam-summary-label">Ragu-ragu</div>
                 </div>
                 <div>
-                  <div style={{ fontSize: '1.5rem', fontWeight: 800, color: unansweredCount > 0 ? 'var(--danger)' : 'var(--text-muted)' }}>{unansweredCount}</div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Belum Dijawab</div>
+                  <div className={`school-exam-summary-value ${unansweredCount > 0 ? 'unanswered' : ''}`}>{unansweredCount}</div>
+                  <div className="school-exam-summary-label">Belum Dijawab</div>
                 </div>
               </div>
 
               {unansweredCount > 0 && (
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                  fontSize: '0.8rem',
-                  color: 'var(--danger)',
-                  marginTop: '1rem'
-                }}>
+                <div className="school-exam-unanswered-warning">
                   <AlertTriangle size={16} />
                   <span>Masih terdapat {unansweredCount} butir soal yang belum dijawab.</span>
                 </div>
               )}
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+            <div className="school-exam-submit-actions">
               <button onClick={() => setShowSubmitModal(false)} className="btn btn-secondary">
                 Kembali Mengerjakan
               </button>

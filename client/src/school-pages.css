@@ -1,0 +1,614 @@
+/* SMP Negeri 11 PPU — shared page system for admin, student portal and exam workstation */
+:root {
+  --school-ink: #1d2d3e;
+  --school-muted: #62758a;
+  --school-faint: #8b99a9;
+  --school-border: #e1e7ed;
+  --school-border-strong: #cdd7e1;
+  --school-paper: #ffffff;
+  --school-canvas: #f4f7fa;
+  --school-soft: #f7f9fb;
+  --school-navy: #193d5b;
+  --school-navy-hover: #244e70;
+  --school-gold: #d8b667;
+  --school-gold-deep: #a47b2a;
+  --school-green: #237d61;
+  --school-red: #b74747;
+  --school-shadow: 0 8px 22px rgba(24, 47, 68, .055);
+}
+
+/* Admin content pages share the calm, light school identity. Dashboard has its own carefully tuned styles. */
+.admin-layout .main-content {
+  background: var(--school-canvas) !important;
+  padding: clamp(1rem, 2.1vw, 2rem) !important;
+}
+
+.main-content > .animate-fade-in:not(.school-dashboard) {
+  --bg-primary: var(--school-canvas);
+  --bg-secondary: var(--school-paper);
+  --bg-tertiary: #f0f4f7;
+  --bg-card: var(--school-paper);
+  --bg-card-hover: #f8fafc;
+  --bg-glass: rgba(255, 255, 255, .96);
+  --border-subtle: var(--school-border);
+  --border-medium: var(--school-border-strong);
+  --border-glow: rgba(216, 182, 103, .45);
+  --text-main: var(--school-ink);
+  --text-muted: var(--school-muted);
+  --text-faint: var(--school-faint);
+  --primary: var(--school-gold-deep);
+  --primary-hover: #8f6924;
+  --primary-gradient: linear-gradient(135deg, #1b405e, #2b5878);
+  --primary-glow: 0 3px 9px rgba(25, 61, 91, .12);
+  --success: var(--school-green);
+  --success-bg: #edf8f3;
+  --success-border: #cce9dc;
+  --warning: #956d1e;
+  --warning-bg: #fff8e8;
+  --warning-border: #eedcb0;
+  --danger: var(--school-red);
+  --danger-bg: #fff1f1;
+  --danger-border: #f1d1d1;
+  --info: #376c92;
+  --info-bg: #edf6fc;
+  --info-border: #d0e5f3;
+  color: var(--school-ink);
+  width: 100%;
+  max-width: 1600px;
+  margin-inline: auto;
+}
+
+.main-content > .animate-fade-in:not(.school-dashboard) > div:first-child {
+  padding-bottom: 1.15rem !important;
+  margin-bottom: 1.35rem !important;
+  border-bottom: 1px solid var(--school-border);
+}
+
+.main-content > .animate-fade-in:not(.school-dashboard) h1 {
+  color: var(--school-ink) !important;
+  font-size: clamp(1.45rem, 2vw, 1.85rem) !important;
+  line-height: 1.25;
+  font-weight: 760;
+  letter-spacing: -.04em;
+}
+
+.main-content > .animate-fade-in:not(.school-dashboard) h2,
+.main-content > .animate-fade-in:not(.school-dashboard) h3,
+.main-content > .animate-fade-in:not(.school-dashboard) h4 {
+  color: var(--school-ink) !important;
+  letter-spacing: -.025em;
+}
+
+.main-content > .animate-fade-in:not(.school-dashboard) p {
+  color: var(--school-muted);
+  line-height: 1.6;
+}
+
+/* Forms and filters */
+.main-content > .animate-fade-in:not(.school-dashboard) .form-control,
+.main-content > .animate-fade-in:not(.school-dashboard) input,
+.main-content > .animate-fade-in:not(.school-dashboard) textarea,
+.main-content > .animate-fade-in:not(.school-dashboard) select {
+  color: var(--school-ink) !important;
+  background: #fff !important;
+  border-color: var(--school-border-strong) !important;
+  border-radius: 8px !important;
+  box-shadow: none;
+}
+
+.main-content > .animate-fade-in:not(.school-dashboard) .form-control:focus,
+.main-content > .animate-fade-in:not(.school-dashboard) input:focus,
+.main-content > .animate-fade-in:not(.school-dashboard) textarea:focus,
+.main-content > .animate-fade-in:not(.school-dashboard) select:focus {
+  border-color: #b99b55 !important;
+  box-shadow: 0 0 0 3px rgba(216, 182, 103, .16) !important;
+}
+
+.main-content > .animate-fade-in:not(.school-dashboard) .form-control::placeholder,
+.main-content > .animate-fade-in:not(.school-dashboard) input::placeholder,
+.main-content > .animate-fade-in:not(.school-dashboard) textarea::placeholder {
+  color: #8795a5 !important;
+}
+
+.main-content > .animate-fade-in:not(.school-dashboard) .form-label,
+.main-content > .animate-fade-in:not(.school-dashboard) label {
+  color: var(--school-ink);
+}
+
+/* Buttons */
+.main-content > .animate-fade-in:not(.school-dashboard) .btn {
+  border-radius: 7px;
+  font-weight: 680;
+  min-height: 36px;
+  box-shadow: none;
+  transition: background .16s ease, border-color .16s ease, transform .16s ease;
+}
+
+.main-content > .animate-fade-in:not(.school-dashboard) .btn-primary {
+  background: var(--school-gold) !important;
+  border-color: var(--school-gold) !important;
+  color: #1b2b3b !important;
+  box-shadow: 0 3px 8px rgba(168, 126, 37, .12) !important;
+}
+
+.main-content > .animate-fade-in:not(.school-dashboard) .btn-primary:hover {
+  background: #e4c77e !important;
+  border-color: #e4c77e !important;
+  transform: translateY(-1px);
+}
+
+.main-content > .animate-fade-in:not(.school-dashboard) .btn-secondary,
+.main-content > .animate-fade-in:not(.school-dashboard) .btn-outline {
+  background: #fff !important;
+  border-color: var(--school-border-strong) !important;
+  color: #294962 !important;
+}
+
+.main-content > .animate-fade-in:not(.school-dashboard) .btn-secondary:hover,
+.main-content > .animate-fade-in:not(.school-dashboard) .btn-outline:hover {
+  background: #f3f7fa !important;
+  border-color: #a9bac9 !important;
+}
+
+/* Tables, student/class lists and question bank */
+.main-content > .animate-fade-in:not(.school-dashboard) .table-container {
+  overflow-x: auto;
+  background: #fff !important;
+  border: 1px solid var(--school-border) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 2px 8px rgba(24, 47, 68, .025);
+}
+
+.main-content > .animate-fade-in:not(.school-dashboard) table {
+  min-width: 680px;
+  color: var(--school-ink);
+  background: #fff;
+  font-size: .83rem;
+}
+
+.main-content > .animate-fade-in:not(.school-dashboard) th {
+  background: #f0f4f7 !important;
+  color: #64768a !important;
+  border-bottom: 1px solid var(--school-border) !important;
+  font-weight: 750;
+  letter-spacing: .045em;
+  padding: .85rem .95rem;
+}
+
+.main-content > .animate-fade-in:not(.school-dashboard) td {
+  color: var(--school-ink) !important;
+  border-bottom: 1px solid #e9eef2 !important;
+  padding: .85rem .95rem;
+  background: #fff;
+}
+
+.main-content > .animate-fade-in:not(.school-dashboard) tr:hover td {
+  background: #f8fafc !important;
+}
+
+.main-content > .animate-fade-in:not(.school-dashboard) .glass-card,
+.main-content > .animate-fade-in:not(.school-dashboard) .glass-panel {
+  color: var(--school-ink) !important;
+  background: #fff !important;
+  border: 1px solid var(--school-border) !important;
+  border-radius: 10px !important;
+  box-shadow: var(--school-shadow) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.main-content > .animate-fade-in:not(.school-dashboard) .glass-card:hover,
+.main-content > .animate-fade-in:not(.school-dashboard) .glass-panel:hover {
+  border-color: #d4dce4 !important;
+  transform: none;
+}
+
+.main-content > .animate-fade-in:not(.school-dashboard) .badge {
+  border-radius: 5px;
+  font-weight: 680;
+}
+
+.main-content > .animate-fade-in:not(.school-dashboard) .badge-primary {
+  background: #edf3f8 !important;
+  color: #315d7e !important;
+  border-color: #d5e1eb !important;
+}
+.main-content > .animate-fade-in:not(.school-dashboard) .badge-info {
+  background: #edf6fc !important;
+  color: #2f6d93 !important;
+  border-color: #d0e5f3 !important;
+}
+.main-content > .animate-fade-in:not(.school-dashboard) .badge-success {
+  background: #edf8f3 !important;
+  color: #237d61 !important;
+  border-color: #cce9dc !important;
+}
+.main-content > .animate-fade-in:not(.school-dashboard) .badge-warning {
+  background: #fff8e8 !important;
+  color: #956d1e !important;
+  border-color: #eedcb0 !important;
+}
+
+/* Modal consistency */
+.main-content > .animate-fade-in:not(.school-dashboard) .modal-content {
+  color: var(--school-ink) !important;
+  background: #fff !important;
+  border: 1px solid #dfe6ec !important;
+  border-radius: 12px !important;
+  box-shadow: 0 22px 70px rgba(12, 31, 48, .24) !important;
+}
+.main-content > .animate-fade-in:not(.school-dashboard) .modal-header {
+  border-bottom-color: var(--school-border) !important;
+}
+.main-content > .animate-fade-in:not(.school-dashboard) .modal-title { color: var(--school-ink) !important; }
+
+/* Student portal and student-facing preparation/result pages */
+.container.animate-fade-in {
+  --bg-primary: var(--school-canvas);
+  --bg-secondary: #fff;
+  --bg-tertiary: #f0f4f7;
+  --bg-card: #fff;
+  --bg-card-hover: #f8fafc;
+  --border-subtle: var(--school-border);
+  --border-medium: var(--school-border-strong);
+  --border-glow: rgba(216, 182, 103, .4);
+  --text-main: var(--school-ink);
+  --text-muted: var(--school-muted);
+  --text-faint: var(--school-faint);
+  --primary: var(--school-gold-deep);
+  --primary-hover: #8f6924;
+  --primary-gradient: linear-gradient(135deg, #1b405e, #2b5878);
+  --primary-glow: 0 3px 9px rgba(25, 61, 91, .12);
+  --success: var(--school-green);
+  --success-bg: #edf8f3;
+  --success-border: #cce9dc;
+  --warning: #956d1e;
+  --warning-bg: #fff8e8;
+  --warning-border: #eedcb0;
+  --danger: var(--school-red);
+  --danger-bg: #fff1f1;
+  --danger-border: #f1d1d1;
+  color: var(--school-ink);
+  max-width: 1320px;
+  padding: 1.8rem clamp(.85rem, 2.7vw, 2.25rem) !important;
+}
+
+.container.animate-fade-in .glass-card,
+.container.animate-fade-in .glass-panel {
+  color: var(--school-ink) !important;
+  background: #fff !important;
+  border: 1px solid var(--school-border) !important;
+  border-radius: 10px !important;
+  box-shadow: var(--school-shadow) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.container.animate-fade-in > .glass-panel:first-child {
+  background: linear-gradient(115deg, #173954 0%, #214c68 100%) !important;
+  border-color: #244d69 !important;
+  box-shadow: 0 12px 28px rgba(21, 54, 79, .13) !important;
+  color: #fff !important;
+}
+.container.animate-fade-in > .glass-panel:first-child h1,
+.container.animate-fade-in > .glass-panel:first-child h2,
+.container.animate-fade-in > .glass-panel:first-child h3,
+.container.animate-fade-in > .glass-panel:first-child strong { color: #fff !important; }
+.container.animate-fade-in > .glass-panel:first-child p,
+.container.animate-fade-in > .glass-panel:first-child span { color: #d8e3ed; }
+.container.animate-fade-in > .glass-panel:first-child > div > div:last-child {
+  background: rgba(255,255,255,.1) !important;
+  border-color: rgba(255,255,255,.17) !important;
+}
+.container.animate-fade-in .btn-primary {
+  background: var(--school-gold) !important;
+  border-color: var(--school-gold) !important;
+  color: #1b2b3b !important;
+  box-shadow: 0 3px 8px rgba(168, 126, 37, .12) !important;
+}
+.container.animate-fade-in .btn-secondary,
+.container.animate-fade-in .btn-outline {
+  background: #fff !important;
+  color: #294962 !important;
+  border-color: var(--school-border-strong) !important;
+}
+.container.animate-fade-in .modal-content {
+  background: #fff !important;
+  color: var(--school-ink) !important;
+  border-color: var(--school-border) !important;
+}
+
+/* Exam workstation: fixed visual hierarchy, clear status navigation and responsive layout. */
+#root > div:has(.question-nav-grid) {
+  --bg-primary: var(--school-canvas);
+  --bg-secondary: #fff;
+  --bg-tertiary: #f0f4f7;
+  --bg-card: #fff;
+  --bg-card-hover: #f8fafc;
+  --border-subtle: var(--school-border);
+  --border-medium: var(--school-border-strong);
+  --border-glow: rgba(216, 182, 103, .4);
+  --text-main: var(--school-ink);
+  --text-muted: var(--school-muted);
+  --text-faint: var(--school-faint);
+  --primary: var(--school-gold-deep);
+  --primary-hover: #8f6924;
+  --primary-gradient: linear-gradient(135deg, #1b405e, #2b5878);
+  --primary-glow: none;
+  --success: var(--school-green);
+  --success-bg: #edf8f3;
+  --success-border: #cce9dc;
+  --warning: #956d1e;
+  --warning-bg: #fff8e8;
+  --warning-border: #eedcb0;
+  --danger: var(--school-red);
+  --danger-bg: #fff1f1;
+  --danger-border: #f1d1d1;
+  color: var(--school-ink);
+  background: var(--school-canvas) !important;
+}
+
+#root > div > main > div:has(.question-nav-grid) {
+  background: var(--school-canvas) !important;
+  color: var(--school-ink) !important;
+}
+#root > div > main > div:has(.question-nav-grid) > header {
+  display: flex;
+  gap: 1rem !important;
+  min-height: 68px;
+  padding: .7rem clamp(.75rem, 2vw, 1.65rem) !important;
+  background: #fff !important;
+  border-bottom: 1px solid var(--school-border) !important;
+  box-shadow: 0 2px 6px rgba(24,47,68,.035);
+}
+#root > div > main > div:has(.question-nav-grid) > header > div:first-child > div:first-child {
+  color: var(--school-ink) !important;
+  font-size: .96rem !important;
+  font-weight: 760 !important;
+}
+#root > div > main > div:has(.question-nav-grid) > header .timer-box {
+  display: inline-flex;
+  align-items: center;
+  gap: .55rem;
+  min-height: 40px;
+  padding: .4rem .75rem;
+  border: 1px solid #d6e0e8;
+  border-radius: 8px;
+  background: #f6f9fb;
+  color: var(--school-ink);
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+}
+#root > div > main > div:has(.question-nav-grid) > header .timer-box.urgent {
+  background: #fff2f2;
+  border-color: #e5b1b1;
+  color: var(--school-red);
+}
+#root > div > main > div:has(.question-nav-grid) > header .btn-primary {
+  background: var(--school-gold) !important;
+  border-color: var(--school-gold) !important;
+  color: #1b2b3b !important;
+  box-shadow: none !important;
+}
+#root > div > main > div:has(.question-nav-grid) > div[style*="max-width: 1440px"] {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) 290px;
+  align-items: start;
+  gap: 1.1rem !important;
+  max-width: 1500px !important;
+  padding: 1.15rem clamp(.75rem, 2vw, 1.5rem) !important;
+}
+#root > div > main > div:has(.question-nav-grid) main { min-width: 0; }
+#root > div > main > div:has(.question-nav-grid) main > .glass-panel {
+  background: #fff !important;
+  border: 1px solid var(--school-border) !important;
+  border-radius: 11px !important;
+  box-shadow: var(--school-shadow) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+#root > div > main > div:has(.question-nav-grid) main > .glass-panel > div:first-child > div:first-child {
+  padding-bottom: 1rem !important;
+  border-bottom-color: var(--school-border) !important;
+}
+#root > div > main > div:has(.question-nav-grid) main > .glass-panel > div:first-child > div:nth-child(2) {
+  max-width: 900px;
+  font-size: clamp(1rem, 1.5vw, 1.12rem) !important;
+  line-height: 1.8 !important;
+}
+#root > div > main > div:has(.question-nav-grid) .option-item {
+  align-items: center;
+  min-height: 58px;
+  padding: .85rem 1rem !important;
+  margin-bottom: 0 !important;
+  border: 1px solid #dfe6ec !important;
+  border-radius: 9px !important;
+  background: #fff !important;
+  color: var(--school-ink) !important;
+  transition: border-color .15s ease, background .15s ease, box-shadow .15s ease;
+}
+#root > div > main > div:has(.question-nav-grid) .option-item:hover {
+  transform: none !important;
+  border-color: #a9becf !important;
+  background: #f8fafc !important;
+}
+#root > div > main > div:has(.question-nav-grid) .option-item.selected {
+  border-color: #426f93 !important;
+  background: #edf5fb !important;
+  box-shadow: inset 3px 0 #315f82 !important;
+}
+#root > div > main > div:has(.question-nav-grid) .option-badge {
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  border-color: #d5dfe7;
+  background: #f4f7fa;
+  color: #355a78;
+}
+#root > div > main > div:has(.question-nav-grid) .option-item.selected .option-badge {
+  background: #244e70;
+  color: #fff;
+  border-color: #244e70;
+}
+#root > div > main > div:has(.question-nav-grid) .form-control {
+  color: var(--school-ink) !important;
+  background: #fff !important;
+  border-color: var(--school-border-strong) !important;
+  border-radius: 8px !important;
+}
+#root > div > main > div:has(.question-nav-grid) .glass-panel aside,
+#root > div > main > div:has(.question-nav-grid) aside .glass-panel {
+  background: #fff !important;
+  border: 1px solid var(--school-border) !important;
+  border-radius: 11px !important;
+  box-shadow: var(--school-shadow) !important;
+  backdrop-filter: none !important;
+}
+#root > div > main > div:has(.question-nav-grid) aside {
+  position: sticky;
+  top: 82px;
+  min-width: 0;
+}
+#root > div > main > div:has(.question-nav-grid) aside h3 {
+  color: var(--school-ink) !important;
+  font-size: .98rem !important;
+}
+#root > div > main > div:has(.question-nav-grid) .question-nav-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: .45rem;
+  max-height: calc(100vh - 330px) !important;
+  padding: .1rem .15rem .35rem;
+}
+#root > div > main > div:has(.question-nav-grid) .nav-btn {
+  width: 100% !important;
+  height: auto !important;
+  aspect-ratio: 1;
+  min-height: 34px;
+  border-radius: 7px !important;
+  font-variant-numeric: tabular-nums;
+  font-size: .8rem;
+  box-shadow: none !important;
+}
+#root > div > main > div:has(.question-nav-grid) .nav-btn.unanswered {
+  background: #f2f5f8 !important;
+  border-color: #e0e6ec !important;
+  color: #687b8f !important;
+}
+#root > div > main > div:has(.question-nav-grid) .nav-btn.answered {
+  background: #e9f6f0 !important;
+  border-color: #b9e0ce !important;
+  color: #216b52 !important;
+}
+#root > div > main > div:has(.question-nav-grid) .nav-btn.flagged {
+  background: #fff5dd !important;
+  border-color: #e8cf8b !important;
+  color: #865f17 !important;
+}
+#root > div > main > div:has(.question-nav-grid) .nav-btn.active {
+  outline: 2px solid #244e70;
+  outline-offset: 2px;
+  border: 2px solid #244e70 !important;
+  font-weight: 850;
+}
+#root > div > main > div:has(.question-nav-grid) main > .glass-panel > div:last-child {
+  position: sticky;
+  bottom: 0;
+  z-index: 4;
+  padding: .9rem 0 .1rem !important;
+  margin-top: 1.6rem !important;
+  background: linear-gradient(to bottom, rgba(255,255,255,.93), #fff 30%);
+  border-top-color: var(--school-border) !important;
+}
+#root > div > main > div:has(.question-nav-grid) .autosave-pill {
+  border: 1px solid #dfe6ec;
+  background: #f8fafc;
+  color: #607489;
+}
+#root > div > main > div:has(.question-nav-grid) .autosave-saved { background: #edf8f3; border-color: #cce9dc; }
+#root > div > main > div:has(.question-nav-grid) .autosave-offline { background: #fff1f1; border-color: #f1d1d1; }
+#root > div > main > div:has(.question-nav-grid) .modal-content {
+  background: #fff !important;
+  color: var(--school-ink) !important;
+  border: 1px solid var(--school-border) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 22px 70px rgba(12, 31, 48, .24) !important;
+}
+
+@media (max-width: 1050px) {
+  #root > div > main > div:has(.question-nav-grid) > div[style*="max-width: 1440px"] {
+    grid-template-columns: minmax(0, 1fr) 245px;
+  }
+  #root > div > main > div:has(.question-nav-grid) .question-nav-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 780px) {
+  .admin-layout .main-content { padding: 1rem .8rem !important; }
+  .main-content > .animate-fade-in:not(.school-dashboard) > div:first-child {
+    align-items: flex-start !important;
+    gap: .85rem !important;
+  }
+  .main-content > .animate-fade-in:not(.school-dashboard) > div:first-child > div {
+    min-width: 0;
+  }
+  .main-content > .animate-fade-in:not(.school-dashboard) .table-container { border-radius: 8px !important; }
+
+  #root > div > main > div:has(.question-nav-grid) > header {
+    flex-wrap: wrap;
+    position: sticky;
+    top: 0;
+    z-index: 50;
+  }
+  #root > div > main > div:has(.question-nav-grid) > header > div:first-child { flex: 1 1 58%; }
+  #root > div > main > div:has(.question-nav-grid) > header > div:nth-child(2) { order: 3; flex: 1 1 100%; }
+  #root > div > main > div:has(.question-nav-grid) > header > div:last-child { gap: .45rem !important; }
+  #root > div > main > div:has(.question-nav-grid) > div[style*="max-width: 1440px"] {
+    grid-template-columns: minmax(0, 1fr) !important;
+    gap: .85rem !important;
+    padding: .75rem .65rem !important;
+  }
+  #root > div > main > div:has(.question-nav-grid) main { grid-row: 1; }
+  #root > div > main > div:has(.question-nav-grid) aside {
+    position: static;
+    grid-row: 2;
+  }
+  #root > div > main > div:has(.question-nav-grid) main > .glass-panel { padding: 1rem !important; }
+  #root > div > main > div:has(.question-nav-grid) .question-nav-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    max-height: 260px !important;
+  }
+  #root > div > main > div:has(.question-nav-grid) .nav-btn { min-height: 36px; }
+  #root > div > main > div:has(.question-nav-grid) main > .glass-panel > div:last-child {
+    position: sticky;
+    bottom: 0;
+    gap: .5rem;
+    flex-wrap: wrap;
+    padding: .75rem 0 .15rem !important;
+  }
+  #root > div > main > div:has(.question-nav-grid) main > .glass-panel > div:last-child .btn {
+    flex: 1;
+    padding: .65rem .55rem;
+  }
+  #root > div > main > div:has(.question-nav-grid) .matching-pair-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: .35rem;
+    padding: .65rem 0;
+    border-bottom: 1px solid var(--school-border);
+  }
+  #root > div > main > div:has(.question-nav-grid) .matching-pair-row > div:nth-child(2) { display: none; }
+}
+
+@media (max-width: 480px) {
+  .container.animate-fade-in { padding: 1rem .75rem !important; }
+  #root > div > main > div:has(.question-nav-grid) > header { padding: .6rem .65rem !important; }
+  #root > div > main > div:has(.question-nav-grid) > header > div:last-child { flex: 1 1 100%; justify-content: space-between; }
+  #root > div > main > div:has(.question-nav-grid) .question-nav-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  #root > div > main > div:has(.question-nav-grid) .timer-box { min-width: 112px; justify-content: center; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .main-content > .animate-fade-in:not(.school-dashboard) .btn,
+  #root > div > main > div:has(.question-nav-grid) .option-item { transition: none; }
+}
