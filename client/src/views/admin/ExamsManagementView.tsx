@@ -45,6 +45,10 @@ export const ExamsManagementView: React.FC<{ onNavigateToProctor: (examId: numbe
   // Token Generator Form
   const [newTokenCustom, setNewTokenCustom] = useState('');
   const [newTokenMaxUsage, setNewTokenMaxUsage] = useState(0);
+  const [recoveryTokenInfo, setRecoveryTokenInfo] = useState<{ token: string; rotation_minutes: number; seconds_remaining: number; valid_until: string } | null>(null);
+  const [rotationMinutes, setRotationMinutes] = useState(5);
+  const [savingRotation, setSavingRotation] = useState(false);
+  const [recoveryTokenError, setRecoveryTokenError] = useState('');
 
   const fetchExams = async () => {
     try {
@@ -196,6 +200,53 @@ export const ExamsManagementView: React.FC<{ onNavigateToProctor: (examId: numbe
     }
   };
 
+  // Supervisor recovery token is separate from the exam-entry token and rotates server-side.
+  const fetchRecoveryTokenInfo = async (examId: number, syncRotation = false) => {
+    try {
+      const res = await fetch(`/api/admin/exams/${examId}/recovery-token`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Gagal memuat token pemulihan.');
+      setRecoveryTokenInfo(data);
+      setRecoveryTokenError('');
+      if (syncRotation) setRotationMinutes(Number(data.rotation_minutes) || 5);
+    } catch (err: any) {
+      setRecoveryTokenError(err.message || 'Gagal memuat token pemulihan.');
+    }
+  };
+
+  const saveRotationMinutes = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedExamForTokens) return;
+    setSavingRotation(true);
+    setRecoveryTokenError('');
+    try {
+      const res = await fetch(`/api/admin/exams/${selectedExamForTokens.id}/recovery-token-settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ rotation_minutes: rotationMinutes })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Gagal menyimpan interval.');
+      setRecoveryTokenInfo(data);
+      setRotationMinutes(Number(data.rotation_minutes) || 5);
+      showMsg('Interval token pemulihan berhasil disimpan.', 'success');
+    } catch (err: any) {
+      setRecoveryTokenError(err.message || 'Gagal menyimpan interval.');
+    } finally {
+      setSavingRotation(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!showTokenModal || !selectedExamForTokens) return;
+    const examId = selectedExamForTokens.id;
+    fetchRecoveryTokenInfo(examId, false);
+    const refreshTimer = setInterval(() => { fetchRecoveryTokenInfo(examId, false); }, 3000);
+    return () => clearInterval(refreshTimer);
+  }, [showTokenModal, selectedExamForTokens?.id, token]);
+
   // Manage Tokens
   const openTokenModal = async (exam: Exam) => {
     setSelectedExamForTokens(exam);
@@ -204,7 +255,10 @@ export const ExamsManagementView: React.FC<{ onNavigateToProctor: (examId: numbe
       if (res.ok) {
         const { tokens } = await res.json();
         setExamTokens(tokens || []);
+        setRecoveryTokenInfo(null);
+        setRecoveryTokenError('');
         setShowTokenModal(true);
+        fetchRecoveryTokenInfo(exam.id, true);
       }
     } catch (_) {}
   };
@@ -671,6 +725,35 @@ export const ExamsManagementView: React.FC<{ onNavigateToProctor: (examId: numbe
               </div>
               <button onClick={() => setShowTokenModal(false)} className="modal-close">&times;</button>
             </div>
+
+            {/* Automatically rotating token used only to unlock a student after an integrity violation. */}
+            <section style={{ marginBottom: '1rem', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--primary-border, var(--border-subtle))', background: 'var(--bg-secondary)' }}>
+              <div style={{ fontWeight: 750, fontSize: '0.9rem', marginBottom: '0.35rem' }}>Token Pemulihan dari Pengawas</div>
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
+                Token terpisah dari token masuk ujian. Token ini berubah otomatis mengikuti interval di bawah dan hanya boleh diberikan oleh pengawas ruangan.
+              </p>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.9rem' }}>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: '1.8rem', letterSpacing: '0.18em', fontWeight: 850 }}>
+                  {recoveryTokenInfo?.token || '------'}
+                </div>
+                <button type="button" className="btn btn-secondary btn-sm" disabled={!recoveryTokenInfo?.token} onClick={() => copyToClipboard(recoveryTokenInfo!.token)}>
+                  {copiedToken === recoveryTokenInfo?.token ? <Check size={14} /> : <Copy size={14} />} Salin token
+                </button>
+              </div>
+              <form onSubmit={saveRotationMinutes} style={{ display: 'flex', alignItems: 'end', gap: '0.6rem', flexWrap: 'wrap' }}>
+                <div style={{ flex: '1 1 170px' }}>
+                  <label className="form-label" style={{ fontSize: '0.75rem' }}>Ganti token setiap (1–60 menit)</label>
+                  <input type="number" className="form-control" min={1} max={60} step={1} value={rotationMinutes} onChange={e => setRotationMinutes(Number(e.target.value))} required />
+                </div>
+                <button type="submit" className="btn btn-primary" disabled={savingRotation || rotationMinutes < 1 || rotationMinutes > 60}>
+                  {savingRotation ? 'Menyimpan...' : 'Simpan interval'}
+                </button>
+              </form>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.65rem' }}>
+                {recoveryTokenInfo ? `Token berganti dalam ${Math.floor(recoveryTokenInfo.seconds_remaining / 60).toString().padStart(2, '0')}:${(recoveryTokenInfo.seconds_remaining % 60).toString().padStart(2, '0')}.` : 'Memuat token saat ini...'}
+              </div>
+              {recoveryTokenError && <div style={{ marginTop: '0.5rem', color: 'var(--danger)', fontSize: '0.8rem' }}>{recoveryTokenError}</div>}
+            </section>
 
             {/* Create new token form */}
             <form onSubmit={handleGenerateToken} style={{ marginBottom: '1.5rem', padding: '1rem', background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)' }}>

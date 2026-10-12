@@ -33,6 +33,13 @@ export const ExamWorkstation: React.FC<WorkstationProps> = ({ attemptId, onFinis
   const [violationCount, setViolationCount] = useState(0);
   const [showViolationModal, setShowViolationModal] = useState(false);
   const [lastViolationMsg, setLastViolationMsg] = useState('');
+  const [isLocked, setIsLocked] = useState(false);
+  const [unlockToken, setUnlockToken] = useState('');
+  const [unlockError, setUnlockError] = useState('');
+  const [unlocking, setUnlocking] = useState(false);
+  const [lockSyncStatus, setLockSyncStatus] = useState<'idle' | 'syncing' | 'locked' | 'failed'>('idle');
+  const violationLockRef = useRef(false);
+  const violationPayloadRef = useRef<{ type: string; message: string } | null>(null);
 
   // Finish confirmation modal
   const [showSubmitModal, setShowSubmitModal] = useState(false);
@@ -60,6 +67,52 @@ export const ExamWorkstation: React.FC<WorkstationProps> = ({ attemptId, onFinis
       setExamInfo(data.attempt);
       setQuestions(data.questions || []);
       setRemainingSeconds(data.attempt.remaining_seconds || 0);
+      setViolationCount(Number(data.attempt.violation_count) || 0);
+      const lockStorageKey = `cbtku_lock_${attemptId}`;
+      let storedLock: { type?: string; message?: string } | null = null;
+      try {
+        const rawLock = localStorage.getItem(lockStorageKey);
+        if (rawLock) storedLock = JSON.parse(rawLock);
+      } catch (_) {}
+
+      if (data.attempt.status === 'locked') {
+        violationLockRef.current = true;
+        violationPayloadRef.current = storedLock ? {
+          type: storedLock.type || 'restored_lock',
+          message: storedLock.message || data.attempt.lock_message || 'Sesi ujian dikunci setelah pelanggaran integritas terdeteksi.'
+        } : {
+          type: 'restored_lock',
+          message: data.attempt.lock_message || 'Sesi ujian dikunci setelah pelanggaran integritas terdeteksi.'
+        };
+        try { localStorage.setItem(lockStorageKey, JSON.stringify(violationPayloadRef.current)); } catch (_) {}
+        setIsLocked(true);
+        setShowViolationModal(true);
+        setLockSyncStatus('locked');
+        setLastViolationMsg(data.attempt.lock_message || storedLock?.message || 'Sesi ujian dikunci setelah pelanggaran integritas terdeteksi.');
+      } else if (data.attempt.status === 'in_progress' && storedLock) {
+        // A previous tab-switch lock is kept locally across reloads until server confirms it.
+        // This closes the refresh-before-request-completes bypass.
+        const payload = {
+          type: storedLock.type || 'restored_lock',
+          message: storedLock.message || 'Sesi tetap dikunci setelah halaman ujian ditinggalkan.'
+        };
+        violationPayloadRef.current = payload;
+        violationLockRef.current = true;
+        setIsLocked(true);
+        setShowViolationModal(true);
+        setLockSyncStatus('syncing');
+        setLastViolationMsg(payload.message);
+        await syncViolationLock(payload.type, payload.message);
+      } else {
+        if (data.attempt.status === 'submitted' || data.attempt.status === 'timed_out') {
+          try { localStorage.removeItem(lockStorageKey); } catch (_) {}
+        }
+        violationLockRef.current = false;
+        violationPayloadRef.current = null;
+        setIsLocked(false);
+        setShowViolationModal(false);
+        setLockSyncStatus('idle');
+      }
 
       // Restore saved answers from server + local storage fallback
       const localBackupKey = `cbtku_backup_${attemptId}`;
@@ -122,6 +175,8 @@ export const ExamWorkstation: React.FC<WorkstationProps> = ({ attemptId, onFinis
 
   // 4. Autosave Engine with debounce
   const triggerAutosave = (qId: number, val: any, flagged: boolean) => {
+    // A locked attempt cannot be edited or queued for another save.
+    if (violationLockRef.current) return;
     // 1. Save immediately to LocalStorage as offline backup
     const updatedAnswers = {
       ...answers,
@@ -158,15 +213,13 @@ export const ExamWorkstation: React.FC<WorkstationProps> = ({ attemptId, onFinis
     }, 600);
   };
 
-  // 5. Anti-Cheat Integrity Proctoring Listeners
-  const recordViolation = async (type: string, message: string) => {
-    setViolationCount(prev => prev + 1);
-    setLastViolationMsg(message);
-    setShowViolationModal(true);
-
+  // Persist lock server-side. The full-screen lock screen remains active if the request fails.
+  const syncViolationLock = async (type: string, message: string) => {
+    setLockSyncStatus('syncing');
     try {
-      await fetch(`/api/student/attempts/${attemptId}/violation`, {
+      const res = await fetch(`/api/student/attempts/${attemptId}/violation`, {
         method: 'POST',
+        keepalive: true,
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           violation_type: type,
@@ -174,7 +227,83 @@ export const ExamWorkstation: React.FC<WorkstationProps> = ({ attemptId, onFinis
           metadata: { timestamp: new Date().toISOString(), url: window.location.href }
         })
       });
-    } catch (_) {}
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.locked !== true) {
+        setLockSyncStatus('failed');
+        setUnlockError(data.error || 'Server belum mengonfirmasi penguncian. Ujian tetap terkunci di perangkat; tekan Coba sinkronkan lagi.');
+        return false;
+      }
+      setLockSyncStatus('locked');
+      setUnlockError('');
+      return true;
+    } catch (_) {
+      setLockSyncStatus('failed');
+      setUnlockError('Koneksi ke server terputus. Ujian tetap terkunci di perangkat; periksa jaringan lalu coba sinkronkan lagi.');
+      return false;
+    }
+  };
+
+  // 5. Any focus/tab/fullscreen violation requires a supervisor recovery token.
+  const recordViolation = async (type: string, message: string) => {
+    // Multiple browser events can be raised for the same tab switch. Lock only once per cycle.
+    if (violationLockRef.current) return;
+    violationLockRef.current = true;
+    violationPayloadRef.current = { type, message };
+    try { localStorage.setItem(`cbtku_lock_${attemptId}`, JSON.stringify({ type, message })); } catch (_) {}
+    setIsLocked(true);
+    setViolationCount(prev => prev + 1);
+    setLastViolationMsg(message);
+    setUnlockError('');
+    setUnlockToken('');
+    setShowViolationModal(true);
+    await syncViolationLock(type, message);
+  };
+
+  const retryViolationLock = async () => {
+    const payload = violationPayloadRef.current;
+    if (!payload) {
+      setUnlockError('Status pelanggaran tidak tersedia. Hubungi pengawas untuk memeriksa sesi ini.');
+      return;
+    }
+    await syncViolationLock(payload.type, payload.message);
+  };
+
+  const handleUnlockAttempt = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!unlockToken.trim() || unlocking) return;
+    if (lockSyncStatus !== 'locked') {
+      setUnlockError('Tunggu sampai server mengonfirmasi bahwa ujian terkunci. Jika sinkronisasi gagal, tekan Coba sinkronkan lagi.');
+      return;
+    }
+    setUnlocking(true);
+    setUnlockError('');
+    try {
+      const res = await fetch(`/api/student/attempts/${attemptId}/unlock`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ token: unlockToken.trim() })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.unlocked !== true) {
+        setUnlockError(data.error || 'Token pemulihan ditolak. Minta token yang sedang aktif kepada pengawas.');
+        return;
+      }
+      violationLockRef.current = false;
+      violationPayloadRef.current = null;
+      try { localStorage.removeItem(`cbtku_lock_${attemptId}`); } catch (_) {}
+      setLockSyncStatus('idle');
+      setIsLocked(false);
+      setShowViolationModal(false);
+      setUnlockToken('');
+      setLastViolationMsg('');
+      if (document.documentElement.requestFullscreen) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      }
+    } catch (err: any) {
+      setUnlockError('Tidak dapat memverifikasi token: ' + (err?.message || 'koneksi gagal'));
+    } finally {
+      setUnlocking(false);
+    }
   };
 
   useEffect(() => {
@@ -194,6 +323,10 @@ export const ExamWorkstation: React.FC<WorkstationProps> = ({ attemptId, onFinis
       }
     };
 
+    const handlePageHide = () => {
+      recordViolation('page_hide', 'Halaman ujian ditinggalkan atau dinavigasi saat sesi berlangsung.');
+    };
+
     const handleContextMenu = (e: MouseEvent) => {
       e.preventDefault();
       return false;
@@ -210,6 +343,8 @@ export const ExamWorkstation: React.FC<WorkstationProps> = ({ attemptId, onFinis
     };
 
     const handleOnline = () => {
+      // Never queue or replay answers while locked, even after network recovery.
+      if (violationLockRef.current) return;
       // Re-sync all answers when internet connection is restored
       setAutosaveStatus('saving');
       Object.entries(answers).forEach(([qId, item]) => {
@@ -225,6 +360,7 @@ export const ExamWorkstation: React.FC<WorkstationProps> = ({ attemptId, onFinis
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('blur', handleWindowBlur);
     document.addEventListener('fullscreenchange', handleFullscreenChange);
+    window.addEventListener('pagehide', handlePageHide);
     document.addEventListener('contextmenu', handleContextMenu);
     document.addEventListener('keydown', handleKeyDown);
     window.addEventListener('online', handleOnline);
@@ -233,6 +369,7 @@ export const ExamWorkstation: React.FC<WorkstationProps> = ({ attemptId, onFinis
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('blur', handleWindowBlur);
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      window.removeEventListener('pagehide', handlePageHide);
       document.removeEventListener('contextmenu', handleContextMenu);
       document.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('online', handleOnline);
@@ -241,6 +378,7 @@ export const ExamWorkstation: React.FC<WorkstationProps> = ({ attemptId, onFinis
 
   // 6. Submit Actions
   const handleAutoSubmitTimeOut = async () => {
+    if (violationLockRef.current) return;
     alert('Waktu ujian telah berakhir! Sistem otomatis mengumpulkan seluruh jawaban Anda.');
     try {
       await fetch(`/api/student/attempts/${attemptId}/submit`, {
@@ -252,6 +390,7 @@ export const ExamWorkstation: React.FC<WorkstationProps> = ({ attemptId, onFinis
   };
 
   const handleManualSubmit = async () => {
+    if (violationLockRef.current) return;
     setSubmitting(true);
     try {
       const res = await fetch(`/api/student/attempts/${attemptId}/submit`, {
@@ -271,6 +410,46 @@ export const ExamWorkstation: React.FC<WorkstationProps> = ({ attemptId, onFinis
     return (
       <div style={{ textAlign: 'center', padding: '6rem 0', color: 'var(--text-muted)' }}>
         <p>Memuat lembar soal dan menyinkronkan status dengan server...</p>
+      </div>
+    );
+  }
+
+  // Render a standalone, full-viewport lock page instead of leaving the exam UI interactive underneath.
+  // This is intentionally returned before all question controls are rendered.
+  if (isLocked || showViolationModal) {
+    return (
+      <div role="dialog" aria-modal="true" aria-labelledby="integrity-lock-title" style={{
+        position: 'fixed', inset: 0, zIndex: 2147483000, background: 'var(--bg-primary)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem',
+        overflowY: 'auto', userSelect: 'none'
+      }}>
+        <div style={{ width: '100%', maxWidth: '520px', borderRadius: '1rem', padding: '2rem',
+          background: 'var(--bg-secondary)', border: '1px solid var(--danger-border)',
+          boxShadow: '0 20px 70px rgba(0,0,0,.35)', textAlign: 'center' }}>
+          <ShieldAlert size={44} color="var(--danger)" style={{ marginBottom: '1rem' }} />
+          <h1 id="integrity-lock-title" style={{ color: 'var(--danger)', fontSize: '1.35rem', marginBottom: '.75rem' }}>
+            Ujian Dikunci — Perlu Token Pengawas
+          </h1>
+          <p style={{ color: 'var(--text-main)', marginBottom: '1rem' }}>{lastViolationMsg || 'Pelanggaran integritas terdeteksi.'}</p>
+          <p style={{ color: 'var(--text-muted)', fontSize: '.9rem', marginBottom: '1.25rem' }}>
+            Anda tidak dapat melihat atau mengerjakan soal, menyimpan jawaban, atau mengumpulkan ujian sampai pengawas memberikan token pemulihan yang masih aktif. Waktu ujian tetap berjalan.
+          </p>
+          {lockSyncStatus === 'syncing' && <p role="status" style={{ color: 'var(--warning)' }}>Mengunci sesi di server...</p>}
+          {lockSyncStatus === 'failed' && <button type="button" onClick={retryViolationLock} className="btn btn-secondary" style={{ width: '100%', marginBottom: '1rem' }}>Coba sinkronkan kunci ke server</button>}
+          {unlockError && <div role="alert" style={{ color: 'var(--danger)', fontSize: '.85rem', marginBottom: '1rem' }}>{unlockError}</div>}
+          {lockSyncStatus === 'locked' && (
+            <form onSubmit={handleUnlockAttempt}>
+              <label htmlFor="supervisor-recovery-token" className="form-label" style={{ display: 'block', textAlign: 'left' }}>Token pemulihan dari pengawas</label>
+              <input id="supervisor-recovery-token" type="text" className="form-control" value={unlockToken}
+                onChange={e => setUnlockToken(e.target.value.replace(/\s+/g, '').slice(0, 6).toUpperCase())}
+                placeholder="Masukkan 6 digit token" maxLength={6} autoComplete="one-time-code" autoFocus disabled={unlocking}
+                style={{ textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: '1.35rem', letterSpacing: '.3em', marginBottom: '.75rem' }} />
+              <button type="submit" disabled={unlocking || unlockToken.trim().length !== 6} className="btn btn-primary" style={{ width: '100%' }}>
+                {unlocking ? 'Memverifikasi token...' : 'Verifikasi token & lanjutkan'}
+              </button>
+            </form>
+          )}
+        </div>
       </div>
     );
   }
@@ -746,23 +925,37 @@ export const ExamWorkstation: React.FC<WorkstationProps> = ({ attemptId, onFinis
               background: 'var(--bg-tertiary)',
               fontSize: '0.8rem',
               color: 'var(--text-muted)',
-              marginBottom: '1.5rem'
+              marginBottom: '1rem'
             }}>
-              Kejadian ini telah dicatat di server pengawas sebagai <strong>Pelanggaran #{violationCount}</strong>. Tindakan berulang dapat mengakibatkan pembatalan ujian.
+              Ujian terkunci. Kejadian ini dicatat sebagai <strong>Pelanggaran #{violationCount}</strong>. Anda tidak dapat melanjutkan atau menyimpan jawaban sampai pengawas ruangan memberikan token pemulihan yang masih aktif.
             </div>
 
-            <button
-              onClick={() => {
-                setShowViolationModal(false);
-                if (document.documentElement.requestFullscreen) {
-                  document.documentElement.requestFullscreen().catch(() => {});
-                }
-              }}
-              className="btn btn-primary"
-              style={{ width: '100%' }}
-            >
-              Saya Mengerti & Lanjutkan Ujian
-            </button>
+            <form onSubmit={handleUnlockAttempt}>
+              <label className="form-label" htmlFor="supervisor-recovery-token" style={{ textAlign: 'left', display: 'block' }}>
+                Token pemulihan dari pengawas
+              </label>
+              <input
+                id="supervisor-recovery-token"
+                type="text"
+                className="form-control"
+                value={unlockToken}
+                onChange={e => setUnlockToken(e.target.value.replace(/\s+/g, '').slice(0, 6))}
+                placeholder="6 digit token"
+                maxLength={6}
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                autoFocus
+                disabled={unlocking}
+                style={{ textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: '1.35rem', letterSpacing: '0.3em', marginBottom: '0.75rem' }}
+              />
+              {unlockError && <div role="alert" style={{ color: 'var(--danger)', fontSize: '0.8rem', marginBottom: '0.75rem' }}>{unlockError}</div>}
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginBottom: '1rem' }}>
+                Token berubah otomatis sesuai interval yang ditetapkan administrator. Jika token sudah berubah, minta kode terbaru kepada pengawas.
+              </p>
+              <button type="submit" disabled={unlocking || unlockToken.trim().length !== 6} className="btn btn-primary" style={{ width: '100%' }}>
+                {unlocking ? 'Memverifikasi token...' : 'Verifikasi & Buka Kunci Ujian'}
+              </button>
+            </form>
           </div>
         </div>
       )}

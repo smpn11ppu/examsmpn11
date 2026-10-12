@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 const { authenticate, requireRole, logAudit } = require('../middleware/auth');
+const { DEFAULT_ROTATION_MINUTES, getRecoveryToken } = require('../recovery-token');
 
 router.use(authenticate, requireRole('student'));
 
@@ -55,7 +56,7 @@ router.get('/exams', (req, res) => {
 
   const results = filteredExams.map(e => {
     const attempts = attemptStmt.all(e.id, student.id);
-    const activeAttempt = attempts.find(a => a.status === 'in_progress');
+    const activeAttempt = attempts.find(a => a.status === 'in_progress' || a.status === 'locked');
     const isUpcoming = now < e.start_time;
     const isPast = now > e.end_time;
     const isOngoing = !isUpcoming && !isPast;
@@ -111,7 +112,7 @@ router.post('/exams/:id/verify-token', (req, res) => {
 
   // Check student attempts limit
   const attemptsCount = db.prepare('SELECT COUNT(*) as count FROM exam_attempts WHERE exam_id = ? AND user_id = ?').get(id, req.user.id).count;
-  const activeAttempt = db.prepare("SELECT id FROM exam_attempts WHERE exam_id = ? AND user_id = ? AND status = 'in_progress'").get(id, req.user.id);
+  const activeAttempt = db.prepare("SELECT id, status FROM exam_attempts WHERE exam_id = ? AND user_id = ? AND status IN ('in_progress', 'locked')").get(id, req.user.id);
 
   if (!activeAttempt && attemptsCount >= exam.max_attempts) {
     return res.status(400).json({ error: `Anda telah mencapai batas maksimum pengerjaan (${exam.max_attempts} kali).` });
@@ -154,14 +155,16 @@ router.post('/exams/:id/start', (req, res) => {
   // Check if active in_progress attempt already exists
   const existingAttempt = db.prepare(`
     SELECT * FROM exam_attempts 
-    WHERE exam_id = ? AND user_id = ? AND status = 'in_progress'
+    WHERE exam_id = ? AND user_id = ? AND status IN ('in_progress', 'locked')
+    ORDER BY id DESC
   `).get(id, req.user.id);
 
   if (existingAttempt) {
     return res.json({
       message: 'Melanjutkan sesi ujian Anda yang sedang berlangsung.',
       attempt_id: existingAttempt.id,
-      server_end_time: existingAttempt.server_end_time
+      server_end_time: existingAttempt.server_end_time,
+      status: existingAttempt.status
     });
   }
 
@@ -259,13 +262,13 @@ router.get('/attempts/:id/workstation', (req, res) => {
   const now = new Date();
   const serverEndTime = new Date(attempt.server_end_time);
 
-  // Auto timeout if server deadline passed
-  if (attempt.status === 'in_progress' && now > serverEndTime) {
+  // Exam time continues to run while a violation lock is active.
+  if ((attempt.status === 'in_progress' || attempt.status === 'locked') && now > serverEndTime) {
     db.prepare("UPDATE exam_attempts SET status = 'timed_out', submitted_at = ? WHERE id = ?").run(now.toISOString(), id);
     attempt.status = 'timed_out';
   }
 
-  if (attempt.status !== 'in_progress') {
+  if (attempt.status !== 'in_progress' && attempt.status !== 'locked') {
     return res.status(400).json({
       error: 'Sesi ujian ini telah selesai atau kedaluwarsa.',
       status: attempt.status
@@ -344,6 +347,12 @@ router.get('/attempts/:id/workstation', (req, res) => {
     };
   });
 
+  const lastViolation = db.prepare(`
+    SELECT message, created_at FROM violation_logs
+    WHERE attempt_id = ? ORDER BY id DESC LIMIT 1
+  `).get(id);
+  const violationStats = db.prepare('SELECT COUNT(*) AS count FROM violation_logs WHERE attempt_id = ?').get(id);
+
   res.json({
     attempt: {
       id: attempt.id,
@@ -352,6 +361,9 @@ router.get('/attempts/:id/workstation', (req, res) => {
       instructions: attempt.instructions,
       subject_name: attempt.subject_name,
       security_mode: attempt.security_mode,
+      status: attempt.status,
+      lock_message: attempt.status === 'locked' ? (lastViolation?.message || 'Sesi dikunci setelah pelanggaran integritas terdeteksi.') : null,
+      violation_count: violationStats?.count || 0,
       server_end_time: attempt.server_end_time,
       remaining_seconds: remainingSeconds,
       server_time: now.toISOString()
@@ -376,7 +388,10 @@ router.post('/attempts/:id/autosave', (req, res) => {
   const now = new Date();
   const serverEndTime = new Date(attempt.server_end_time);
 
-  // If time has expired, lock attempt
+  if (attempt.status === 'locked') {
+    return res.status(423).json({ error: 'Ujian dikunci karena pelanggaran integritas. Minta token pemulihan aktif kepada pengawas.', is_locked: true });
+  }
+
   if (now > serverEndTime || attempt.status !== 'in_progress') {
     if (attempt.status === 'in_progress') {
       db.prepare("UPDATE exam_attempts SET status = 'timed_out', submitted_at = ? WHERE id = ?").run(now.toISOString(), id);
@@ -404,22 +419,80 @@ router.post('/attempts/:id/autosave', (req, res) => {
   });
 });
 
-// 6. RECORD VIOLATION (TAB SWITCH, BLUR, FULLSCREEN EXIT, ETC.)
+// 6. RECORD VIOLATION AND VERIFY SERVER-SIDE LOCK
 router.post('/attempts/:id/violation', (req, res) => {
   const { id } = req.params;
-  const { violation_type, message, metadata } = req.body;
+  const { violation_type, message, metadata } = req.body || {};
 
-  const attempt = db.prepare('SELECT id FROM exam_attempts WHERE id = ? AND user_id = ?').get(id, req.user.id);
+  const attempt = db.prepare('SELECT id, exam_id, status FROM exam_attempts WHERE id = ? AND user_id = ?').get(id, req.user.id);
   if (!attempt) return res.status(404).json({ error: 'Sesi ujian tidak ditemukan.' });
+  if (attempt.status === 'submitted' || attempt.status === 'timed_out') {
+    return res.status(409).json({ error: 'Sesi ujian telah berakhir dan tidak dapat dikunci kembali.', locked: false });
+  }
+
+  // An already locked attempt is still locked; do not create duplicate records from blur+visibility events.
+  if (attempt.status === 'locked') {
+    return res.json({ recorded: true, locked: true, already_locked: true, message: 'Sesi ujian sudah terkunci dan menunggu token pengawas.' });
+  }
+  if (attempt.status !== 'in_progress') {
+    return res.status(409).json({ error: 'Status sesi tidak mengizinkan penguncian.', locked: false, status: attempt.status });
+  }
 
   const metaStr = typeof metadata === 'object' ? JSON.stringify(metadata) : String(metadata || '');
-
+  const violationMessage = message || 'Pelanggaran terdeteksi';
   db.prepare(`
     INSERT INTO violation_logs (attempt_id, user_id, violation_type, message, metadata)
     VALUES (?, ?, ?, ?, ?)
-  `).run(id, req.user.id, violation_type || 'generic_violation', message || 'Pelanggaran terdeteksi', metaStr);
+  `).run(id, req.user.id, violation_type || 'generic_violation', violationMessage, metaStr);
 
-  res.json({ recorded: true });
+  // Persist the lock before acknowledging it to the client. If this fails, return an error rather than claiming success.
+  db.prepare("UPDATE exam_attempts SET status = 'locked' WHERE id = ? AND user_id = ? AND status = 'in_progress'").run(id, req.user.id);
+  const confirmed = db.prepare('SELECT status FROM exam_attempts WHERE id = ? AND user_id = ?').get(id, req.user.id);
+  if (confirmed?.status !== 'locked') {
+    return res.status(500).json({ error: 'Server gagal menyimpan status terkunci. Jangan lanjutkan ujian; coba sinkronkan ulang dan hubungi pengawas.', locked: false });
+  }
+
+  res.json({ recorded: true, locked: true, message: 'Ujian dikunci di server. Token pemulihan pengawas diperlukan untuk melanjutkan.' });
+});
+
+// Only the currently valid rotating supervisor token can unlock a locked attempt.
+router.post('/attempts/:id/unlock', (req, res) => {
+  const { id } = req.params;
+  const suppliedToken = String(req.body?.token || '').trim().replace(/\s+/g, '').toUpperCase();
+  if (!suppliedToken) return res.status(400).json({ error: 'Token pemulihan dari pengawas wajib diisi.' });
+
+  const attempt = db.prepare('SELECT id, exam_id, status, server_end_time FROM exam_attempts WHERE id = ? AND user_id = ?').get(id, req.user.id);
+  if (!attempt) return res.status(404).json({ error: 'Sesi ujian tidak ditemukan.' });
+  if (attempt.status !== 'locked') return res.status(409).json({ error: 'Sesi ujian tidak dalam status terkunci.' });
+  if (Date.now() > new Date(attempt.server_end_time).getTime()) {
+    db.prepare("UPDATE exam_attempts SET status = 'timed_out', submitted_at = ? WHERE id = ? AND status = 'locked'").run(new Date().toISOString(), id);
+    return res.status(403).json({ error: 'Waktu ujian sudah habis. Penguncian tidak bisa dibuka kembali.' });
+  }
+
+  const nowIso = new Date().toISOString();
+  const oneMinuteAgo = new Date(Date.now() - 60 * 1000).toISOString();
+  const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  // Persist rate limiting in the database because serverless function instances are not sticky.
+  db.prepare('DELETE FROM exam_recovery_failures WHERE attempted_at < ?').run(oneDayAgo);
+  const recentFailures = db.prepare(`
+    SELECT COUNT(*) AS count FROM exam_recovery_failures
+    WHERE attempt_id = ? AND user_id = ? AND attempted_at > ?
+  `).get(id, req.user.id, oneMinuteAgo);
+  if ((recentFailures?.count || 0) >= 5) {
+    return res.status(429).json({ error: 'Terlalu banyak token salah. Tunggu satu menit lalu minta token aktif kepada pengawas.' });
+  }
+
+  const setting = db.prepare('SELECT rotation_minutes FROM exam_recovery_settings WHERE exam_id = ?').get(attempt.exam_id);
+  const recovery = getRecoveryToken(attempt.exam_id, setting?.rotation_minutes || DEFAULT_ROTATION_MINUTES);
+  if (suppliedToken !== recovery.token) {
+    db.prepare('INSERT INTO exam_recovery_failures (attempt_id, user_id, attempted_at) VALUES (?, ?, ?)').run(id, req.user.id, nowIso);
+    return res.status(403).json({ error: 'Token tidak sesuai atau sudah berganti. Minta token aktif kepada pengawas ruangan.' });
+  }
+
+  const updated = db.prepare("UPDATE exam_attempts SET status = 'in_progress' WHERE id = ? AND user_id = ? AND status = 'locked'").run(id, req.user.id);
+  if (!updated || updated.changes === 0) return res.status(409).json({ error: 'Status sesi telah berubah. Muat ulang ruang ujian.' });
+  logAudit(req.user.id, 'SUPERVISOR_TOKEN_UNLOCK', `Siswa berhasil membuka kunci attempt ${id} setelah token pemulihan pengawas diverifikasi`, req.ip);
+  res.json({ unlocked: true, message: 'Ujian dibuka kembali oleh token pengawas.' });
 });
 
 // 7. SUBMIT EXAM WITH AUTOMATIC OBJECTIVE GRADING
@@ -434,6 +507,9 @@ router.post('/attempts/:id/submit', (req, res) => {
   `).get(id, req.user.id);
 
   if (!attempt) return res.status(404).json({ error: 'Sesi ujian tidak ditemukan.' });
+  if (attempt.status === 'locked') {
+    return res.status(423).json({ error: 'Ujian masih terkunci. Minta token pemulihan aktif kepada pengawas sebelum melanjutkan atau mengumpulkan.' });
+  }
 
   // If already submitted (idempotent request)
   if (attempt.status === 'submitted' || attempt.status === 'timed_out') {

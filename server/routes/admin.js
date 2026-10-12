@@ -5,6 +5,7 @@ const multer = require('multer');
 const xlsx = require('xlsx');
 const db = require('../db');
 const { authenticate, requireRole, logAudit } = require('../middleware/auth');
+const { DEFAULT_ROTATION_MINUTES, MIN_ROTATION_MINUTES, MAX_ROTATION_MINUTES, normalizeRotationMinutes, getRecoveryToken } = require('../recovery-token');
 
 // All routes in this router require admin role
 router.use(authenticate, requireRole('admin'));
@@ -682,7 +683,44 @@ router.put('/tokens/:id/toggle', (req, res) => {
   res.json({ message: 'Status token berhasil diubah' });
 });
 
-// --- 8. PROCTORING & REALTIME ATTEMPTS MONITORING ---
+// --- 8. ROTATING SUPERVISOR RECOVERY TOKEN ---
+function getExamRecoveryInterval(examId) {
+  const row = db.prepare('SELECT rotation_minutes FROM exam_recovery_settings WHERE exam_id = ?').get(examId);
+  return normalizeRotationMinutes(row?.rotation_minutes || DEFAULT_ROTATION_MINUTES);
+}
+
+router.get('/exams/:id/recovery-token', (req, res) => {
+  const examId = Number(req.params.id);
+  const exam = db.prepare('SELECT id FROM exams WHERE id = ?').get(examId);
+  if (!exam) return res.status(404).json({ error: 'Ujian tidak ditemukan.' });
+
+  const rotationMinutes = getExamRecoveryInterval(examId);
+  res.json({ exam_id: examId, ...getRecoveryToken(examId, rotationMinutes) });
+});
+
+router.put('/exams/:id/recovery-token-settings', (req, res) => {
+  const examId = Number(req.params.id);
+  const exam = db.prepare('SELECT id FROM exams WHERE id = ?').get(examId);
+  if (!exam) return res.status(404).json({ error: 'Ujian tidak ditemukan.' });
+
+  const raw = Number(req.body?.rotation_minutes);
+  if (!Number.isInteger(raw) || raw < MIN_ROTATION_MINUTES || raw > MAX_ROTATION_MINUTES) {
+    return res.status(400).json({ error: `Interval pergantian token harus berupa bilangan bulat ${MIN_ROTATION_MINUTES}–${MAX_ROTATION_MINUTES} menit.` });
+  }
+
+  db.prepare(`
+    INSERT INTO exam_recovery_settings (exam_id, rotation_minutes, updated_at)
+    VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(exam_id) DO UPDATE SET
+      rotation_minutes = excluded.rotation_minutes,
+      updated_at = CURRENT_TIMESTAMP
+  `).run(examId, raw);
+
+  logAudit(req.user.id, 'SET_RECOVERY_TOKEN_ROTATION', `Interval token pemulihan ujian ${examId} diatur menjadi ${raw} menit`, req.ip);
+  res.json({ message: 'Interval token pemulihan berhasil disimpan.', exam_id: examId, ...getRecoveryToken(examId, raw) });
+});
+
+// --- 9. PROCTORING & REALTIME ATTEMPTS MONITORING ---
 router.get('/exams/:id/proctor', (req, res) => {
   const { id } = req.params;
 

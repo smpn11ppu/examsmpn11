@@ -87,6 +87,13 @@ CREATE TABLE IF NOT EXISTS classes (
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
   );
 
+  CREATE TABLE IF NOT EXISTS exam_recovery_settings (
+    id SERIAL PRIMARY KEY,
+    exam_id INTEGER NOT NULL UNIQUE REFERENCES exams(id) ON DELETE CASCADE,
+    rotation_minutes INTEGER NOT NULL DEFAULT 5 CHECK(rotation_minutes BETWEEN 1 AND 60),
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+  );
+
   CREATE TABLE IF NOT EXISTS exam_attempts (
     id SERIAL PRIMARY KEY,
     exam_id INTEGER NOT NULL REFERENCES exams(id) ON DELETE CASCADE,
@@ -99,6 +106,13 @@ CREATE TABLE IF NOT EXISTS classes (
     ip_address TEXT,
     user_agent TEXT,
     is_seb INTEGER DEFAULT 0
+  );
+
+  CREATE TABLE IF NOT EXISTS exam_recovery_failures (
+    id SERIAL PRIMARY KEY,
+    attempt_id INTEGER NOT NULL REFERENCES exam_attempts(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    attempted_at TEXT NOT NULL
   );
 
   CREATE TABLE IF NOT EXISTS attempt_questions (
@@ -156,5 +170,6 @@ CREATE TABLE IF NOT EXISTS classes (
   CREATE INDEX IF NOT EXISTS idx_questions_subject ON questions(subject_id);
   CREATE INDEX IF NOT EXISTS idx_exam_tokens_token ON exam_tokens(token);
   CREATE INDEX IF NOT EXISTS idx_exam_attempts_user_exam ON exam_attempts(user_id, exam_id);
+  CREATE INDEX IF NOT EXISTS idx_recovery_failures_user_attempt_time ON exam_recovery_failures(user_id, attempt_id, attempted_at);
   CREATE INDEX IF NOT EXISTS idx_answers_attempt ON answers(attempt_id);
   CREATE INDEX IF NOT EXISTS idx_violations_attempt ON violation_logs(attempt_id);

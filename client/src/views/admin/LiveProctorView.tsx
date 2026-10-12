@@ -110,6 +110,7 @@ export const LiveProctorView: React.FC<{ initialExamId?: number }> = ({ initialE
   };
 
   const inProgressCount = attempts.filter(a => a.status === 'in_progress').length;
+  const lockedCount = attempts.filter(a => a.status === 'locked').length;
   const submittedCount = attempts.filter(a => a.status === 'submitted').length;
   const totalViolationsCount = violations.length;
 
@@ -192,6 +193,13 @@ export const LiveProctorView: React.FC<{ initialExamId?: number }> = ({ initialE
         </div>
 
         <div className="glass-card">
+          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)' }}>Terkunci — Menunggu Pengawas</div>
+          <div style={{ fontSize: '1.75rem', fontWeight: 800, color: lockedCount > 0 ? 'var(--danger)' : 'var(--text-main)', marginTop: '0.25rem' }}>
+            {lockedCount} Siswa
+          </div>
+        </div>
+
+        <div className="glass-card">
           <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)' }}>Sudah Mengumpulkan</div>
           <div style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--success)', marginTop: '0.25rem' }}>
             {submittedCount} Siswa
@@ -246,9 +254,11 @@ export const LiveProctorView: React.FC<{ initialExamId?: number }> = ({ initialE
                     <td>
                       <span className={`badge ${
                         att.status === 'in_progress' ? 'badge-warning' :
+                        att.status === 'locked' ? 'badge-danger' :
                         att.status === 'submitted' ? 'badge-success' : 'badge-danger'
                       }`}>
                         {att.status === 'in_progress' ? 'Mengerjakan' :
+                         att.status === 'locked' ? 'Terkunci — Minta Token Pengawas' :
                          att.status === 'submitted' ? 'Selesai Dikumpulkan' : 'Waktu Habis'}
                       </span>
                     </td>

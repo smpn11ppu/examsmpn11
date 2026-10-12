@@ -148,7 +148,7 @@ export const StudentPortal: React.FC<{
                     isCompleted ? 'badge-success' :
                     exam.isOngoing ? 'badge-primary' : 'badge'
                   }`}>
-                    {hasActiveAttempt ? 'Sedang Dikerjakan' :
+                    {hasActiveAttempt ? (exam.activeAttempt?.status === 'locked' ? 'Terkunci — Minta Token Pengawas' : 'Sedang Dikerjakan') :
                      isCompleted ? 'Sudah Selesai' :
                      exam.isOngoing ? 'Tersedia Sekarang' : 'Mendatang'}
                   </span>
@@ -181,7 +181,7 @@ export const StudentPortal: React.FC<{
                       style={{ width: '100%' }}
                     >
                       <PlayCircle size={16} />
-                      <span>Lanjutkan Ujian</span>
+                      <span>{exam.activeAttempt?.status === 'locked' ? 'Buka Kunci dengan Token Pengawas' : 'Lanjutkan Ujian'}</span>
                     </button>
                   ) : isCompleted ? (
                     <div style={{ display: 'flex', gap: '0.5rem' }}>
