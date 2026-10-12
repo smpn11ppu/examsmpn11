@@ -38,6 +38,10 @@
       "dest": "/client/logo-smpn11-ppu.jpg"
     },
     {
+      "src": "/(manifest\\.webmanifest|sw\\.js|offline\\.html|pwa-192\\.png|pwa-512\\.png|pwa-512-maskable\\.png|apple-touch-icon\\.png)",
+      "dest": "/client/$1"
+    },
+    {
       "src": "/(.*)",
       "dest": "/client/index.html"
     }

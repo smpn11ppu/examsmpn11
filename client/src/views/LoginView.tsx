@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { LockKeyhole, UserRound, AlertCircle, ArrowRight, LoaderCircle } from 'lucide-react';
 import './LoginView.css';
+import { InstallAppButton } from '../components/InstallAppButton';
 
 export const LoginView: React.FC = () => {
   const { login } = useAuth();
@@ -108,6 +109,8 @@ export const LoginView: React.FC = () => {
               {loading ? <LoaderCircle className="school-login-spinner" size={18} /> : <ArrowRight size={18} />}
             </button>
           </form>
+
+          <InstallAppButton variant="login" />
 
           <div className="school-login-security-note">
             <LockKeyhole size={15} aria-hidden="true" />

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Sun, Moon, LogOut, User as UserIcon } from 'lucide-react';
 import './Header.css';
+import { InstallAppButton } from './InstallAppButton';
 
 export const Header: React.FC = () => {
   const { user, logout } = useAuth();
@@ -33,6 +34,7 @@ export const Header: React.FC = () => {
       </div>
 
       <div className="school-app-header-actions">
+        <InstallAppButton variant="header" />
         {user && (
           <div className="school-app-user-chip">
             <span className="school-app-user-avatar"><UserIcon size={15} aria-hidden="true" /></span>

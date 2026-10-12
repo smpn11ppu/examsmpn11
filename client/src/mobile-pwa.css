@@ -1,0 +1,95 @@
+/* Mobile finishing layer for the SMP Negeri 11 PPU CBTKU web app/PWA. */
+html { min-height: 100%; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; scroll-padding-top: 5rem; }
+body { min-width: 320px; min-height: 100%; overscroll-behavior-y: contain; -webkit-tap-highlight-color: rgba(25, 61, 91, .12); }
+button, input, select, textarea, a { touch-action: manipulation; }
+button, .nav-link, .option-item, select, input, textarea { -webkit-tap-highlight-color: rgba(25, 61, 91, .12); }
+img { max-width: 100%; }
+
+/* Add safe-area spacing for notched phones and standalone mode. */
+.school-login-page { min-height: 100vh; min-height: 100svh; padding-top: max(1rem, env(safe-area-inset-top)); padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
+.school-app-header { padding-top: max(.55rem, env(safe-area-inset-top)); }
+.school-exam-root { min-height: 100vh; min-height: 100dvh; padding-bottom: env(safe-area-inset-bottom); }
+.school-exam-header { padding-top: max(.65rem, env(safe-area-inset-top)); }
+
+/* Student portal cards should shrink to the phone width instead of overflowing at 320px. */
+@media (max-width: 640px) {
+  .container { max-width: 100%; padding-left: .8rem !important; padding-right: .8rem !important; }
+  .container.animate-fade-in > div[style*="minmax(320px"] { grid-template-columns: minmax(0, 1fr) !important; }
+  .container.animate-fade-in > div[style*="grid-template-columns"] { min-width: 0; }
+  .container .glass-card, .container .glass-panel { min-width: 0; }
+  .container h1 { overflow-wrap: anywhere; }
+
+  /* Replace the wide admin sidebar with two compact, horizontally scrollable navigation rows. */
+  .admin-layout { display: flex !important; flex-direction: column !important; min-height: 0 !important; width: 100%; }
+  .admin-layout > .sidebar {
+    position: sticky;
+    top: 62px;
+    z-index: 45;
+    display: block !important;
+    width: 100% !important;
+    max-width: 100%;
+    max-height: 108px;
+    padding: .4rem .55rem !important;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-right: 0 !important;
+    border-bottom: 1px solid var(--school-border, #e1e7ed) !important;
+    background: var(--bg-secondary, #fff) !important;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+  .admin-layout > .sidebar > div { display: none !important; }
+  .admin-layout > .sidebar > nav {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center;
+    gap: .3rem !important;
+    width: max-content;
+    min-width: 100%;
+    margin: 0 0 .3rem !important;
+  }
+  .admin-layout > .sidebar > nav:last-of-type { margin-bottom: 0 !important; }
+  .admin-layout > .sidebar .nav-link {
+    flex: 0 0 auto;
+    min-height: 38px;
+    width: auto !important;
+    margin: 0 !important;
+    padding: .5rem .7rem !important;
+    gap: .4rem;
+    border-radius: 8px !important;
+    font-size: .76rem !important;
+    white-space: nowrap;
+  }
+  .admin-layout > .sidebar .nav-link svg { width: 15px; height: 15px; }
+  .admin-layout > .main-content {
+    width: 100% !important;
+    min-width: 0;
+    padding: .85rem .65rem !important;
+    overflow-x: hidden;
+  }
+  .admin-layout .main-content > .animate-fade-in:not(.school-dashboard) > div:first-child { flex-wrap: wrap !important; }
+  .admin-layout .main-content .table-container { max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .admin-layout .main-content table { min-width: 640px; }
+
+  /* Targets and form fields are more comfortable for fingers. */
+  .btn, .school-login-submit, .school-app-icon-button, .school-app-logout { min-height: 42px; }
+  input, select, textarea { max-width: 100%; }
+}
+
+@media (max-width: 420px) {
+  .school-app-header { padding-left: .5rem; padding-right: .5rem; }
+  .school-app-brand-name { max-width: 124px !important; font-size: .76rem !important; }
+  .school-app-brand-caption { font-size: .6rem !important; }
+  .school-app-header-actions { gap: .25rem !important; }
+  .school-login-brand-panel { padding-left: 1rem !important; padding-right: 1rem !important; }
+  .school-login-form-panel { padding-left: 1rem !important; padding-right: 1rem !important; }
+  .school-login-school-name { font-size: 1.35rem !important; }
+  .school-exam-root .school-exam-question-grid { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; }
+  .school-exam-root .school-exam-question-card { padding: .85rem !important; }
+  .school-exam-root .school-exam-actions { gap: .35rem !important; }
+  .school-exam-root .timer-box { min-width: 104px !important; font-size: .82rem !important; }
+}
+
+/* Keep the admin page active-navigation treatment consistent with the navy/gold identity. */
+.admin-layout .nav-link.active { background: linear-gradient(135deg, #193d5b, #2c5878) !important; color: #fff !important; box-shadow: 0 3px 10px rgba(25, 61, 91, .16) !important; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; } }
