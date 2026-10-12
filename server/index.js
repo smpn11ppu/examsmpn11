@@ -4,25 +4,24 @@ const cookieParser = require('cookie-parser');
 const path = require('path');
 const fs = require('fs');
 
-// Ensure db and initial seeds
-// Initialise database (read‑only in Vercel). The DB module may throw if the file is missing or read‑only.
-let dbInitialized = true;
+// Load database and optionally create demo data. In production, seeding is
+// opt-in and should be disabled after the first successful initialization.
+let dbAvailable = false;
 try {
-  require('./db');
+  const db = require('./db');
+  dbAvailable = Boolean(db && db.dbAvailable);
 } catch (e) {
-  dbInitialized = false;
-  console.error('❌ Database initialisation failed:', e.message);
+  console.error('Database initialisation failed:', e.message);
 }
-// Run seed data only in development (NODE_ENV !== 'production')
-if (process.env.NODE_ENV !== 'production') {
+
+const seedDemoEnabled = process.env.NODE_ENV !== 'production' || process.env.CBTKU_SEED_DEMO === 'true';
+if (dbAvailable && seedDemoEnabled) {
   try {
     require('./seed');
   } catch (e) {
-    console.error('Seed notice (dev):', e.message);
+    console.error('Seed notice:', e.message);
   }
 }
-
-const { dbAvailable } = require('./db');
 const authRoutes = require('./routes/auth');
 const adminRoutes = require('./routes/admin');
 const studentRoutes = require('./routes/student');
@@ -34,8 +33,7 @@ const PORT = process.env.PORT || 5000;
 // Middleware to abort if DB is unavailable (e.g., read‑only on Vercel)
 app.use((req, res, next) => {
   if (!dbAvailable) {
-    console.error('❌ DB not available for request', req.path);
-    return res.status(503).json({ error: 'Database not available in this environment' });
+    return res.status(503).json({ error: 'Database CBTKU belum tersedia di server. Database SQLite lokal tidak dapat menjadi penyimpanan persisten di Vercel. Konfigurasikan database produksi terlebih dahulu.' });
   }
   next();
 });
@@ -50,7 +48,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
 
 // Static uploads directory if any
-const uploadDir = path.join(__dirname, '..', 'data', 'uploads');
+const uploadDir = path.resolve(process.env.CBTKU_UPLOAD_DIR || path.join(__dirname, '..', 'data', 'uploads'));
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }

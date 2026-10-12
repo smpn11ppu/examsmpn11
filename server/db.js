@@ -1,197 +1,90 @@
-const { DatabaseSync, OPEN_READONLY, OPEN_READWRITE, OPEN_CREATE } = require('node:sqlite');
-const path = require('path');
-const fs = require('fs');
+'use strict';
 
-// Resolve the absolute data directory relative to the repository root.
-// In Vercel the repo is bundled, so we use process.cwd() as a reliable base.
-const dataDir = path.join(process.cwd(), 'data');
-if (!fs.existsSync(dataDir)) {
-  // In production this should already exist; create only in dev.
-  fs.mkdirSync(dataDir, { recursive: true });
+// CBTKU dual database driver:
+// - Local development keeps SQLite (same synchronous API used by existing routes).
+// - When DATABASE_URL is provided, PostgreSQL/Neon is used through a dedicated
+//   worker thread, preserving the current synchronous .prepare().get/all/run API.
+// This bridge eases migration without rewriting every existing route at once.
+
+if (!process.env.DATABASE_URL) {
+  module.exports = require('./db-sqlite');
+} else {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const { Worker } = require('node:worker_threads');
+  const { TextDecoder, TextEncoder } = require('node:util');
+
+  const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
+  const controlBuffer = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 2);
+  const control = new Int32Array(controlBuffer);
+  const responseBuffer = new SharedArrayBuffer(MAX_RESPONSE_BYTES);
+  const responseBytes = new Uint8Array(responseBuffer);
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+
+  let worker;
+  let dbAvailable = false;
+  let lastInitError = null;
+
+  function invoke(op, sql, params = []) {
+    if (!worker) throw new Error(lastInitError || 'Worker database PostgreSQL belum aktif.');
+    Atomics.store(control, 0, 0);
+    Atomics.store(control, 1, 0);
+    worker.postMessage({ op, sql, params, controlBuffer, responseBuffer });
+    const waitResult = Atomics.wait(control, 0, 0, 30000);
+    if (waitResult === 'timed-out') {
+      throw new Error('Timeout saat menghubungi database PostgreSQL. Periksa DATABASE_URL dan status Neon.');
+    }
+    const state = Atomics.load(control, 0);
+    const length = Atomics.load(control, 1);
+    if (length < 0 || length > MAX_RESPONSE_BYTES) throw new Error('Respons database tidak valid.');
+    let payload;
+    try { payload = JSON.parse(decoder.decode(responseBytes.subarray(0, length))); }
+    catch { throw new Error('Respons database PostgreSQL tidak dapat dibaca.'); }
+    if (state !== 1 || !payload.ok) throw new Error(payload.error || 'Query PostgreSQL gagal.');
+    return payload.value;
+  }
+
+  const db = {
+    dbAvailable: false,
+    exec(sql) {
+      if (/^\s*PRAGMA\b/i.test(sql)) return undefined;
+      return invoke('exec', sql, []);
+    },
+    prepare(sql) {
+      return {
+        get(...params) { return invoke('get', sql, params); },
+        all(...params) { return invoke('all', sql, params); },
+        run(...params) { return invoke('run', sql, params); }
+      };
+    }
+  };
+
+  try {
+    // require.resolve makes the worker visible to file tracing during Vercel build.
+    worker = new Worker(require.resolve('./postgres-worker.js'), {
+      workerData: { connectionString: process.env.DATABASE_URL }
+    });
+    worker.on('error', (err) => {
+      lastInitError = `Worker PostgreSQL gagal: ${err.message}`;
+      dbAvailable = false;
+      db.dbAvailable = false;
+      console.error(lastInitError);
+    });
+    const schemaPath = require.resolve('./schema-postgres.sql');
+    const schema = fs.readFileSync(schemaPath, 'utf8');
+    invoke('exec', schema, []);
+    dbAvailable = true;
+    db.dbAvailable = true;
+    console.log('✅ Database PostgreSQL/Neon siap.');
+  } catch (error) {
+    lastInitError = error.message;
+    dbAvailable = false;
+    db.dbAvailable = false;
+    console.error('❌ Gagal menginisialisasi PostgreSQL/Neon:', error.message);
+  }
+
+  // Public flag is checked by server/index.js before accepting API requests.
+  db.dbAvailable = dbAvailable;
+  module.exports = db;
 }
-
-const dbPath = path.join(dataDir, 'cbtku.sqlite');
-let db;
-let dbAvailable = true;
-try {
-  const options = process.env.NODE_ENV === 'production'
-    ? { readonly: true }
-    : { readonly: false };
-  db = new DatabaseSync(dbPath, options);
-} catch (e) {
-  dbAvailable = false;
-  console.error('❌ Failed to open SQLite database at', dbPath, '-', e.message);
-}
-
-// Export both the DB instance (may be undefined) and a flag.
-module.exports = db;
-module.exports.dbAvailable = dbAvailable;
-
-// Enable foreign keys & WAL mode
-db.exec('PRAGMA foreign_keys = ON;');
-
-// Initialize tables
-db.exec(`
-  CREATE TABLE IF NOT EXISTS classes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    code TEXT UNIQUE NOT NULL,
-    name TEXT NOT NULL,
-    status TEXT DEFAULT 'active',
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
-
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
-    full_name TEXT NOT NULL,
-    role TEXT NOT NULL CHECK(role IN ('admin', 'student')),
-    class_id INTEGER REFERENCES classes(id) ON DELETE SET NULL,
-    status TEXT DEFAULT 'active' CHECK(status IN ('active', 'inactive')),
-    must_change_password INTEGER DEFAULT 1,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
-
-  CREATE TABLE IF NOT EXISTS subjects (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    code TEXT UNIQUE NOT NULL,
-    name TEXT NOT NULL,
-    description TEXT,
-    status TEXT DEFAULT 'active' CHECK(status IN ('active', 'inactive')),
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
-
-  CREATE TABLE IF NOT EXISTS questions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
-    type TEXT NOT NULL CHECK(type IN ('single_choice', 'multiple_choice', 'essay', 'matching', 'true_false')),
-    question_text TEXT NOT NULL,
-    image_url TEXT,
-    weight REAL DEFAULT 1.0,
-    answer_key TEXT NOT NULL,
-    rubric TEXT,
-    status TEXT DEFAULT 'active' CHECK(status IN ('active', 'inactive')),
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
-
-  CREATE TABLE IF NOT EXISTS question_options (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    question_id INTEGER NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
-    option_key TEXT NOT NULL,
-    option_text TEXT NOT NULL,
-    image_url TEXT,
-    order_num INTEGER DEFAULT 0
-  );
-
-  CREATE TABLE IF NOT EXISTS exams (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    title TEXT NOT NULL,
-    subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE RESTRICT,
-    instructions TEXT,
-    target_classes TEXT DEFAULT 'all',
-    start_time TEXT NOT NULL,
-    end_time TEXT NOT NULL,
-    duration_minutes INTEGER NOT NULL,
-    max_attempts INTEGER DEFAULT 1,
-    security_mode TEXT DEFAULT 'standard' CHECK(security_mode IN ('standard', 'seb')),
-    shuffle_questions INTEGER DEFAULT 1,
-    shuffle_options INTEGER DEFAULT 1,
-    publish_score TEXT DEFAULT 'manual' CHECK(publish_score IN ('immediate', 'manual')),
-    status TEXT DEFAULT 'published' CHECK(status IN ('draft', 'published', 'archived')),
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
-
-  CREATE TABLE IF NOT EXISTS exam_questions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    exam_id INTEGER NOT NULL REFERENCES exams(id) ON DELETE CASCADE,
-    question_id INTEGER NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
-    order_num INTEGER DEFAULT 0,
-    UNIQUE(exam_id, question_id)
-  );
-
-  CREATE TABLE IF NOT EXISTS exam_tokens (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    exam_id INTEGER NOT NULL REFERENCES exams(id) ON DELETE CASCADE,
-    token TEXT UNIQUE NOT NULL,
-    valid_from TEXT NOT NULL,
-    valid_until TEXT NOT NULL,
-    max_usage INTEGER DEFAULT 0,
-    usage_count INTEGER DEFAULT 0,
-    status TEXT DEFAULT 'active' CHECK(status IN ('active', 'revoked', 'expired')),
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
-
-  CREATE TABLE IF NOT EXISTS exam_attempts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    exam_id INTEGER NOT NULL REFERENCES exams(id) ON DELETE CASCADE,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    attempt_number INTEGER DEFAULT 1,
-    started_at TEXT NOT NULL,
-    submitted_at TEXT,
-    server_end_time TEXT NOT NULL,
-    status TEXT DEFAULT 'in_progress' CHECK(status IN ('in_progress', 'submitted', 'timed_out', 'locked')),
-    ip_address TEXT,
-    user_agent TEXT,
-    is_seb INTEGER DEFAULT 0
-  );
-
-  CREATE TABLE IF NOT EXISTS attempt_questions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    attempt_id INTEGER NOT NULL REFERENCES exam_attempts(id) ON DELETE CASCADE,
-    question_id INTEGER NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
-    order_num INTEGER NOT NULL,
-    shuffled_option_ids TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS answers (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    attempt_id INTEGER NOT NULL REFERENCES exam_attempts(id) ON DELETE CASCADE,
-    question_id INTEGER NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
-    answer_value TEXT,
-    is_flagged INTEGER DEFAULT 0,
-    saved_at TEXT,
-    score_awarded REAL,
-    essay_feedback TEXT,
-    UNIQUE(attempt_id, question_id)
-  );
-
-  CREATE TABLE IF NOT EXISTS results (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    attempt_id INTEGER UNIQUE NOT NULL REFERENCES exam_attempts(id) ON DELETE CASCADE,
-    objective_score REAL DEFAULT 0,
-    essay_score REAL DEFAULT 0,
-    total_score REAL DEFAULT 0,
-    max_score REAL DEFAULT 100,
-    is_published INTEGER DEFAULT 0,
-    graded_by INTEGER REFERENCES users(id),
-    graded_at TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS violation_logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    attempt_id INTEGER NOT NULL REFERENCES exam_attempts(id) ON DELETE CASCADE,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    violation_type TEXT NOT NULL,
-    message TEXT,
-    metadata TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
-
-  CREATE TABLE IF NOT EXISTS audit_logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER REFERENCES users(id),
-    action TEXT NOT NULL,
-    details TEXT,
-    ip_address TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
-  CREATE INDEX IF NOT EXISTS idx_questions_subject ON questions(subject_id);
-  CREATE INDEX IF NOT EXISTS idx_exam_tokens_token ON exam_tokens(token);
-  CREATE INDEX IF NOT EXISTS idx_exam_attempts_user_exam ON exam_attempts(user_id, exam_id);
-  CREATE INDEX IF NOT EXISTS idx_answers_attempt ON answers(attempt_id);
-  CREATE INDEX IF NOT EXISTS idx_violations_attempt ON violation_logs(attempt_id);
-`);
-
-module.exports = db;
