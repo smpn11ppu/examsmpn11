@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { SubjectItem } from '../../types';
-import { BookOpen, Plus, Search, Edit2, Check, AlertCircle } from 'lucide-react';
+import { BookOpen, Plus, Search, Edit2, Check, AlertCircle, Power, CheckCircle2, Trash2 } from 'lucide-react';
 
 export const SubjectsView: React.FC = () => {
   const { token } = useAuth();
@@ -10,11 +10,14 @@ export const SubjectsView: React.FC = () => {
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({ id: 0, code: '', name: '', description: '' });
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [togglingSubjectId, setTogglingSubjectId] = useState<number | null>(null);
+  const [deletingSubjectId, setDeletingSubjectId] = useState<number | null>(null);
 
   const fetchSubjects = async () => {
     try {
-      const q = search ? `?search=${encodeURIComponent(search)}` : '';
-      const res = await fetch(`/api/admin/subjects${q}`, {
+      const params = new URLSearchParams({ include_inactive: 'true' });
+      if (search) params.set('search', search);
+      const res = await fetch(`/api/admin/subjects?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -61,12 +64,74 @@ export const SubjectsView: React.FC = () => {
     }
   };
 
+  const handleDeleteSubject = async (subject: SubjectItem) => {
+    const confirmation = window.confirm(
+      `Hapus permanen mata pelajaran "${subject.name}"?\n\n` +
+      'Penghapusan hanya berhasil jika mata pelajaran belum digunakan oleh soal atau ujian. ' +
+      'Jika masih digunakan, nonaktifkan mata pelajaran agar tidak dipilih untuk penggunaan baru.'
+    );
+    if (!confirmation) return;
+
+    setDeletingSubjectId(subject.id);
+    try {
+      const res = await fetch(`/api/admin/subjects/${subject.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showMsg(data.error || 'Mata pelajaran tidak dapat dihapus', 'error');
+        return;
+      }
+      showMsg(data.message || 'Mata pelajaran berhasil dihapus', 'success');
+      await fetchSubjects();
+    } catch (err: any) {
+      showMsg('Error koneksi: ' + err.message, 'error');
+    } finally {
+      setDeletingSubjectId(null);
+    }
+  };
+
+  const handleToggleStatus = async (subject: SubjectItem) => {
+    const nextStatus = subject.status === 'active' ? 'inactive' : 'active';
+    const action = nextStatus === 'inactive' ? 'menonaktifkan' : 'mengaktifkan';
+    const extraInfo = nextStatus === 'inactive'
+      ? '\n\nMata pelajaran ini tidak akan tersedia untuk pemilihan baru. Data soal dan riwayat ujian tidak dihapus.'
+      : '\n\nMata pelajaran ini akan tersedia kembali untuk pemilihan baru.';
+
+    if (!window.confirm(`Yakin ingin ${action} mata pelajaran "${subject.name}"?${extraInfo}`)) return;
+
+    setTogglingSubjectId(subject.id);
+    try {
+      const res = await fetch(`/api/admin/subjects/${subject.id}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ status: nextStatus })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showMsg(data.error || 'Gagal mengubah status mata pelajaran', 'error');
+        return;
+      }
+      showMsg(data.message || 'Status mata pelajaran berhasil diperbarui', 'success');
+      await fetchSubjects();
+    } catch (err: any) {
+      showMsg('Error koneksi: ' + err.message, 'error');
+    } finally {
+      setTogglingSubjectId(null);
+    }
+  };
+
   return (
     <div className="animate-fade-in">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
         <div>
           <h1 style={{ fontSize: '1.75rem', marginBottom: '0.25rem' }}>Mata Pelajaran</h1>
           <p style={{ fontSize: '0.875rem' }}>Kelola daftar kurikulum dan mata pelajaran yang diujikan.</p>
+          <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>Mata pelajaran nonaktif tidak tersedia untuk pemilihan baru. Soal dan riwayat ujian yang sudah ada tetap disimpan.</p>
         </div>
 
         <button
@@ -144,16 +209,39 @@ export const SubjectsView: React.FC = () => {
                     </span>
                   </td>
                   <td style={{ textAlign: 'right' }}>
-                    <button
-                      onClick={() => {
-                        setForm({ id: s.id, code: s.code, name: s.name, description: s.description || '' });
-                        setShowModal(true);
-                      }}
-                      className="btn btn-secondary btn-sm"
-                    >
-                      <Edit2 size={14} />
-                      <span>Edit</span>
-                    </button>
+                    <div style={{ display: 'inline-flex', gap: '0.45rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                      <button
+                        onClick={() => {
+                          setForm({ id: s.id, code: s.code, name: s.name, description: s.description || '' });
+                          setShowModal(true);
+                        }}
+                        className="btn btn-secondary btn-sm"
+                        title={`Edit ${s.name}`}
+                      >
+                        <Edit2 size={14} />
+                        <span>Edit</span>
+                      </button>
+                      <button
+                        onClick={() => handleToggleStatus(s)}
+                        disabled={togglingSubjectId === s.id || deletingSubjectId === s.id}
+                        className="btn btn-secondary btn-sm"
+                        title={s.status === 'active' ? 'Nonaktifkan mata pelajaran' : 'Aktifkan mata pelajaran'}
+                        style={{ color: s.status === 'active' ? 'var(--danger)' : 'var(--success)', opacity: togglingSubjectId === s.id ? 0.65 : 1 }}
+                      >
+                        {s.status === 'active' ? <Power size={14} /> : <CheckCircle2 size={14} />}
+                        <span>{togglingSubjectId === s.id ? 'Memproses...' : s.status === 'active' ? 'Nonaktifkan' : 'Aktifkan'}</span>
+                      </button>
+                      <button
+                        onClick={() => handleDeleteSubject(s)}
+                        disabled={deletingSubjectId === s.id || togglingSubjectId === s.id}
+                        className="btn btn-secondary btn-sm"
+                        title={`Hapus permanen ${s.name}`}
+                        style={{ color: 'var(--danger)', opacity: deletingSubjectId === s.id ? 0.65 : 1 }}
+                      >
+                        <Trash2 size={14} />
+                        <span>{deletingSubjectId === s.id ? 'Menghapus...' : 'Hapus'}</span>
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))

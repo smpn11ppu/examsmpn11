@@ -133,6 +133,31 @@ export const ClassesAndStudents: React.FC = () => {
     }
   };
 
+  const handleDeleteStudent = async (student: User) => {
+    const confirmed = confirm(
+      `Hapus murid ${student.full_name} (${student.username})? Penghapusan permanen hanya diizinkan jika murid belum memiliki riwayat ujian. Jika sudah memiliki riwayat, sistem akan menolak penghapusan untuk melindungi nilai dan jawaban.`
+    );
+    if (!confirmed) return;
+
+    try {
+      const res = await fetch(`/api/admin/students/${student.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (res.ok) {
+        showMsg(data.message || 'Data murid berhasil dihapus.', 'success');
+        await fetchStudents();
+        await fetchClasses();
+      } else {
+        showMsg(data.error || 'Murid tidak dapat dihapus.', 'error');
+      }
+    } catch (err: any) {
+      showMsg('Error: ' + err.message, 'error');
+    }
+  };
+
   const handleResetPassword = async (id: number, username: string) => {
     if (!confirm(`Reset password untuk murid ${username} ke "siswa11"? Siswa akan diwajibkan mengganti password saat login berikutnya.`)) return;
 
@@ -376,6 +401,14 @@ export const ClassesAndStudents: React.FC = () => {
                             title="Edit Murid"
                           >
                             <Edit2 size={14} />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteStudent(s)}
+                            className="btn btn-secondary btn-sm"
+                            style={{ color: 'var(--danger)' }}
+                            title="Hapus Murid"
+                          >
+                            <Trash2 size={14} />
                           </button>
                         </div>
                       </td>
