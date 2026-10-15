@@ -7,6 +7,66 @@ import {
   CheckCircle2, XCircle, ArrowRight
 } from 'lucide-react';
 
+const MAX_COMPRESSED_IMAGE_BYTES = 450 * 1024;
+
+/** Compresses an image in the browser before sending it to the authenticated Cloudinary upload endpoint. */
+const compressQuestionImage = async (file: File): Promise<Blob> => {
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+    throw new Error('Pilih gambar berformat JPG, PNG, atau WebP.');
+  }
+  if (file.size > 15 * 1024 * 1024) {
+    throw new Error('Ukuran gambar asli maksimal 15 MB. Silakan pilih gambar yang lebih kecil.');
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('Gambar tidak dapat dibaca. Coba file gambar lain.'));
+      img.src = objectUrl;
+    });
+
+    const maxDimension = 1280;
+    const ratio = Math.min(1, maxDimension / Math.max(image.naturalWidth, image.naturalHeight));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * ratio));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * ratio));
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Browser tidak dapat memproses gambar ini.');
+
+    // White background keeps transparent PNGs readable when WebP is unavailable.
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+    const toBlob = (mime: string, quality: number) => new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('Gagal mengompres gambar.')), mime, quality);
+    });
+
+    let blob: Blob | null = null;
+    for (const quality of [0.78, 0.68, 0.58, 0.48]) {
+      blob = await toBlob('image/webp', quality);
+      // Some browsers may ignore the requested WebP type and return PNG instead.
+      if (blob.type !== 'image/webp') blob = await toBlob('image/jpeg', quality);
+      if (blob.size <= MAX_COMPRESSED_IMAGE_BYTES) break;
+    }
+
+    if (!blob || blob.size > MAX_COMPRESSED_IMAGE_BYTES) {
+      throw new Error('Gambar masih terlalu besar setelah dikompres. Gunakan gambar yang lebih kecil atau resolusi lebih rendah.');
+    }
+
+    return blob as Blob;
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+};
+
+type QuestionWithImageDisplay = Question & {
+  image_display_url?: string | null;
+  options?: Array<QuestionOption & { image_display_url?: string | null }>;
+};
+
 export const QuestionBankView: React.FC = () => {
   const { token } = useAuth();
   const [questions, setQuestions] = useState<Question[]>([]);
@@ -17,9 +77,14 @@ export const QuestionBankView: React.FC = () => {
 
   // Modals
   const [showEditorModal, setShowEditorModal] = useState(false);
-  const [previewQuestion, setPreviewQuestion] = useState<Question | null>(null);
+  const [previewQuestion, setPreviewQuestion] = useState<QuestionWithImageDisplay | null>(null);
   const [showImportModal, setShowImportModal] = useState(false);
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [imageInputMode, setImageInputMode] = useState<'url' | 'upload'>('url');
+  const [isImageProcessing, setIsImageProcessing] = useState(false);
+  const [editorImageError, setEditorImageError] = useState(false);
+  const [editorImagePreviewUrl, setEditorImagePreviewUrl] = useState('');
+  const [previewImageError, setPreviewImageError] = useState(false);
 
   // Question Form State
   const [form, setForm] = useState({
@@ -87,6 +152,9 @@ export const QuestionBankView: React.FC = () => {
   };
 
   const handleOpenNew = () => {
+    setImageInputMode('url');
+    setEditorImageError(false);
+    setEditorImagePreviewUrl('');
     setForm({
       id: 0,
       subject_id: subjects[0]?.id ? String(subjects[0].id) : '',
@@ -111,40 +179,100 @@ export const QuestionBankView: React.FC = () => {
     setShowEditorModal(true);
   };
 
-  const handleEdit = (q: Question) => {
-    let multiKeys: string[] = [];
-    let matchingPairs: Array<{ left: string; right: string }> = [];
+  const handleEdit = async (q: Question) => {
+    try {
+      // Detail endpoint carries the full image; the list endpoint intentionally does not.
+      const res = await fetch(`/api/admin/questions/${q.id}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const json = await res.json();
+      if (!res.ok || !json.question) throw new Error(json.error || 'Gagal memuat detail soal.');
+      const question = json.question as QuestionWithImageDisplay;
 
-    if (q.type === 'multiple_choice') {
-      try {
-        multiKeys = JSON.parse(q.answer_key);
-      } catch (_) {
-        multiKeys = [q.answer_key];
+      let multiKeys: string[] = [];
+      let matchingPairs: Array<{ left: string; right: string }> = [];
+
+      if (question.type === 'multiple_choice') {
+        try {
+          multiKeys = JSON.parse(question.answer_key);
+        } catch (_) {
+          multiKeys = [question.answer_key];
+        }
+      } else if (question.type === 'matching') {
+        try {
+          const obj = JSON.parse(question.answer_key);
+          matchingPairs = Object.entries(obj).map(([left, right]) => ({ left, right: String(right) }));
+        } catch (_) {}
       }
-    } else if (q.type === 'matching') {
-      try {
-        const obj = JSON.parse(q.answer_key);
-        matchingPairs = Object.entries(obj).map(([left, right]) => ({ left, right: String(right) }));
-      } catch (_) {}
-    }
 
-    setForm({
-      id: q.id,
-      subject_id: String(q.subject_id),
-      type: q.type,
-      question_text: q.question_text,
-      image_url: q.image_url || '',
-      weight: q.weight,
-      answer_key: q.answer_key,
-      rubric: q.rubric || '',
-      options: q.options && q.options.length > 0 ? q.options : [
-        { option_key: 'A', option_text: '' },
-        { option_key: 'B', option_text: '' }
-      ],
-      matchingPairs: matchingPairs.length > 0 ? matchingPairs : [{ left: '', right: '' }, { left: '', right: '' }],
-      multiKeys
-    });
-    setShowEditorModal(true);
+      setForm({
+        id: question.id,
+        subject_id: String(question.subject_id),
+        type: question.type,
+        question_text: question.question_text,
+        image_url: question.image_url || '',
+        weight: question.weight,
+        answer_key: question.answer_key,
+        rubric: question.rubric || '',
+        options: question.options && question.options.length > 0 ? question.options : [
+          { option_key: 'A', option_text: '' },
+          { option_key: 'B', option_text: '' }
+        ],
+        matchingPairs: matchingPairs.length > 0 ? matchingPairs : [{ left: '', right: '' }, { left: '', right: '' }],
+        multiKeys
+      });
+      setImageInputMode(question.image_url?.startsWith('cloudinary://') || question.image_url?.startsWith('r2://') || question.image_url?.startsWith('data:image/') ? 'upload' : 'url');
+      setEditorImagePreviewUrl(question.image_display_url || (question.image_url?.startsWith('cloudinary://') || question.image_url?.startsWith('r2://') ? '' : question.image_url || ''));
+      setEditorImageError(false);
+      setShowEditorModal(true);
+    } catch (err: any) {
+      showMsg('Gagal membuka soal: ' + (err?.message || 'Kesalahan tidak diketahui'), 'error');
+    }
+  };
+
+  const handleImageUpload = async (file?: File) => {
+    if (!file) return;
+    setEditorImageError(false);
+    setIsImageProcessing(true);
+    try {
+      const compressedBlob = await compressQuestionImage(file);
+
+      // The authenticated backend applies a hard 500 KB limit, validates image bytes,
+      // then stores the image as a private authenticated Cloudinary asset.
+      const body = new FormData();
+      const extension = compressedBlob.type === 'image/webp' ? 'webp' : compressedBlob.type === 'image/png' ? 'png' : 'jpg';
+      body.append('image', compressedBlob, `cbtku-soal.${extension}`);
+
+      const uploadRes = await fetch('/api/admin/questions/image-upload', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body
+      });
+      const uploadInfo = await uploadRes.json();
+      if (!uploadRes.ok) throw new Error(uploadInfo.error || 'Gagal mengunggah gambar ke Cloudinary.');
+
+      setForm(prev => ({ ...prev, image_url: uploadInfo.image_url }));
+      setEditorImagePreviewUrl(uploadInfo.image_display_url || '');
+      showMsg('Gambar berhasil disimpan di Cloudinary. Klik Simpan Soal untuk menyimpan perubahan.', 'success');
+    } catch (err: any) {
+      showMsg(err?.message || 'Gagal memproses gambar.', 'error');
+    } finally {
+      setIsImageProcessing(false);
+    }
+  };
+
+  const handleOpenPreview = async (q: Question) => {
+    setPreviewImageError(false);
+    try {
+      const res = await fetch(`/api/admin/questions/${q.id}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const json = await res.json();
+      if (!res.ok || !json.question) throw new Error(json.error || 'Gagal memuat pratinjau soal.');
+      setPreviewQuestion(json.question as QuestionWithImageDisplay);
+    } catch (err: any) {
+      showMsg('Gagal memuat pratinjau: ' + (err?.message || 'Kesalahan tidak diketahui'), 'error');
+    }
   };
 
   const handleDelete = async (id: number) => {
@@ -165,6 +293,10 @@ export const QuestionBankView: React.FC = () => {
 
   const handleSaveQuestion = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isImageProcessing) {
+      showMsg('Tunggu sampai gambar selesai diproses.', 'error');
+      return;
+    }
 
     let finalAnswerKey: any = form.answer_key;
     let finalOptions = form.options;
@@ -361,7 +493,7 @@ export const QuestionBankView: React.FC = () => {
                   <td style={{ textAlign: 'right' }}>
                     <div style={{ display: 'inline-flex', gap: '0.4rem' }}>
                       <button
-                        onClick={() => setPreviewQuestion(q)}
+                        onClick={() => handleOpenPreview(q)}
                         className="btn btn-secondary btn-sm"
                         title="Pratinjau Soal"
                       >
@@ -458,14 +590,74 @@ export const QuestionBankView: React.FC = () => {
               </div>
 
               <div className="form-group">
-                <label className="form-label">URL Gambar Ilustrasi (Opsional)</label>
-                <input
-                  type="text"
-                  className="form-control"
-                  placeholder="https://... atau /uploads/gambar.png"
-                  value={form.image_url}
-                  onChange={e => setForm({ ...form, image_url: e.target.value })}
-                />
+                <label className="form-label">Gambar Ilustrasi Soal (Opsional)</label>
+                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+                  <button type="button" className={`btn btn-sm ${imageInputMode === 'url' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setImageInputMode('url')}>
+                    Gunakan Link Gambar
+                  </button>
+                  <button type="button" className={`btn btn-sm ${imageInputMode === 'upload' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setImageInputMode('upload')}>
+                    <Upload size={14} /> Unggah dari Komputer
+                  </button>
+                </div>
+
+                {imageInputMode === 'url' ? (
+                  <>
+                    <input
+                      type="text"
+                      className="form-control"
+                      placeholder="https://contoh.com/gambar-soal.jpg"
+                      value={form.image_url.startsWith('data:image/') || form.image_url.startsWith('r2://') || form.image_url.startsWith('cloudinary://') ? '' : form.image_url}
+                      onChange={e => {
+                        setForm({ ...form, image_url: e.target.value });
+                        setEditorImagePreviewUrl(e.target.value);
+                        setEditorImageError(false);
+                      }}
+                    />
+                    <small style={{ display: 'block', color: 'var(--text-muted)', marginTop: '0.4rem' }}>
+                      Gunakan URL langsung ke file gambar (JPG, PNG, atau WebP), bukan link halaman berbagi seperti halaman pratinjau Drive.
+                    </small>
+                  </>
+                ) : (
+                  <>
+                    <input
+                      type="file"
+                      className="form-control"
+                      accept="image/jpeg,image/png,image/webp"
+                      disabled={isImageProcessing}
+                      onChange={e => {
+                        const file = e.target.files?.[0];
+                        void handleImageUpload(file);
+                        e.currentTarget.value = '';
+                      }}
+                    />
+                    <small style={{ display: 'block', color: 'var(--text-muted)', marginTop: '0.4rem' }}>
+                      Format JPG, PNG, WebP. Gambar diperkecil maksimal 1280 px dan dikompres hingga 450 KB. Server membatasi ukuran berkas hingga 500 KB. Cloudinary menyimpan berkas; Neon hanya menyimpan referensinya.
+                    </small>
+                    {isImageProcessing && <div style={{ marginTop: '0.5rem', color: 'var(--text-muted)' }}>Sedang memproses dan mengompres gambar…</div>}
+                  </>
+                )}
+
+                {form.image_url && (
+                  <div style={{ marginTop: '0.85rem', padding: '0.75rem', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)' }}>
+                    <div style={{ fontSize: '0.8rem', fontWeight: 600, marginBottom: '0.5rem' }}>Pratinjau gambar</div>
+                    {!editorImageError ? (
+                      <img
+                        src={editorImagePreviewUrl}
+                        alt="Pratinjau ilustrasi soal"
+                        onError={() => setEditorImageError(true)}
+                        onLoad={() => setEditorImageError(false)}
+                        style={{ display: 'block', maxWidth: '100%', maxHeight: '220px', objectFit: 'contain', margin: '0 auto', borderRadius: 'var(--radius-md)' }}
+                      />
+                    ) : (
+                      <div style={{ color: 'var(--danger)', fontSize: '0.85rem' }}>
+                        Gambar tidak dapat dibuka. Pastikan link mengarah langsung ke file gambar dan dapat diakses tanpa login.
+                      </div>
+                    )}
+                    <button type="button" className="btn btn-secondary btn-sm" style={{ marginTop: '0.65rem' }} onClick={() => { setForm({ ...form, image_url: '' }); setEditorImagePreviewUrl(''); setEditorImageError(false); }}>
+                      Hapus gambar
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Dynamic Answer Key & Options based on type */}
@@ -681,7 +873,7 @@ export const QuestionBankView: React.FC = () => {
                 <span className="badge badge-primary">{typeLabels[previewQuestion.type]}</span>
                 <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>Bobot: {previewQuestion.weight} pt</span>
               </div>
-              <button onClick={() => setPreviewQuestion(null)} className="modal-close">&times;</button>
+              <button onClick={() => { setPreviewQuestion(null); setPreviewImageError(false); }} className="modal-close">&times;</button>
             </div>
 
             <div style={{ marginBottom: '1.5rem' }}>
@@ -691,11 +883,18 @@ export const QuestionBankView: React.FC = () => {
 
               {previewQuestion.image_url && (
                 <div style={{ marginBottom: '1rem', textAlign: 'center' }}>
-                  <img
-                    src={previewQuestion.image_url}
-                    alt="Ilustrasi soal"
-                    style={{ maxWidth: '100%', maxHeight: '240px', borderRadius: 'var(--radius-md)' }}
-                  />
+                  {!previewImageError ? (
+                    <img
+                      src={previewQuestion.image_display_url || (previewQuestion.image_url?.startsWith('cloudinary://') || previewQuestion.image_url?.startsWith('r2://') ? '' : previewQuestion.image_url || '')}
+                      alt="Ilustrasi soal"
+                      onError={() => setPreviewImageError(true)}
+                      style={{ maxWidth: '100%', maxHeight: '240px', objectFit: 'contain', borderRadius: 'var(--radius-md)' }}
+                    />
+                  ) : (
+                    <div style={{ color: 'var(--danger)', fontSize: '0.85rem' }}>
+                      Gambar tidak dapat dimuat. Periksa apakah link menuju file gambar langsung dan tidak memerlukan login.
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -757,7 +956,7 @@ export const QuestionBankView: React.FC = () => {
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-              <button onClick={() => setPreviewQuestion(null)} className="btn btn-secondary">
+              <button onClick={() => { setPreviewQuestion(null); setPreviewImageError(false); }} className="btn btn-secondary">
                 Tutup Pratinjau
               </button>
             </div>

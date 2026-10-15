@@ -3,6 +3,7 @@ const router = express.Router();
 const db = require('../db');
 const { authenticate, requireRole, logAudit } = require('../middleware/auth');
 const { DEFAULT_ROTATION_MINUTES, getRecoveryToken } = require('../recovery-token');
+const { resolveImageDisplayUrl } = require('../image-storage');
 
 router.use(authenticate, requireRole('student'));
 
@@ -244,7 +245,7 @@ router.post('/exams/:id/start', (req, res) => {
 });
 
 // 4. WORKSTATION: GET QUESTIONS AND RESTORE SAVED STATE
-router.get('/attempts/:id/workstation', (req, res) => {
+router.get('/attempts/:id/workstation', async (req, res) => {
   const { id } = req.params;
 
   const attempt = db.prepare(`
@@ -325,6 +326,21 @@ router.get('/attempts/:id/workstation', (req, res) => {
       }))
     };
   });
+
+  // Replace private Cloudinary references with signed delivery URLs only for the questions in this attempt.
+  // Image bytes are served by Cloudinary CDN; Neon contains only the compact image reference.
+  try {
+    await Promise.all(questionsWithOrderedOptions.map(async (question) => {
+      question.image_url = await resolveImageDisplayUrl(question.image_url);
+      question.options = await Promise.all(question.options.map(async (option) => ({
+        ...option,
+        image_url: await resolveImageDisplayUrl(option.image_url)
+      })));
+    }));
+  } catch (err) {
+    console.error('[CBTKU Cloudinary] Could not prepare student exam image URLs:', err);
+    return res.status(503).json({ error: 'Gambar soal belum dapat dimuat. Hubungi admin sekolah untuk memeriksa konfigurasi penyimpanan gambar.' });
+  }
 
   // Get student's existing answers from server
   const savedAnswers = db.prepare(`

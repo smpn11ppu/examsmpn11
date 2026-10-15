@@ -6,12 +6,26 @@ const xlsx = require('xlsx');
 const db = require('../db');
 const { authenticate, requireRole, logAudit } = require('../middleware/auth');
 const { DEFAULT_ROTATION_MINUTES, MIN_ROTATION_MINUTES, MAX_ROTATION_MINUTES, normalizeRotationMinutes, getRecoveryToken } = require('../recovery-token');
+const {
+  isCloudinaryImageRef, cloudinaryPublicIdFromRef, uploadQuestionImage, resolveImageDisplayUrl, deleteStoredImage,
+  ALLOWED_CONTENT_TYPES, MAX_QUESTION_IMAGE_BYTES
+} = require('../image-storage');
 
 // All routes in this router require admin role
 router.use(authenticate, requireRole('admin'));
 
-// Configure multer for file uploads
+// Existing import endpoints use memory storage. Question images have their own strict limit.
 const upload = multer({ storage: multer.memoryStorage() });
+const questionImageUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_QUESTION_IMAGE_BYTES, files: 1 },
+  fileFilter: (req, file, callback) => {
+    if (!Object.prototype.hasOwnProperty.call(ALLOWED_CONTENT_TYPES, file.mimetype)) {
+      return callback(new Error('Format gambar tidak didukung. Gunakan JPG, PNG, atau WebP.'));
+    }
+    callback(null, true);
+  }
+});
 
 // --- 1. DASHBOARD STATS ---
 router.get('/dashboard', (req, res) => {
@@ -190,6 +204,55 @@ router.put('/students/:id', (req, res) => {
   }
 });
 
+// Permanently delete a student only when they have no exam history.
+// Historical attempts and violation records are intentionally protected.
+router.delete('/students/:id', (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: 'ID murid tidak valid.' });
+  }
+
+  const student = db.prepare(
+    "SELECT id, username, full_name FROM users WHERE id = ? AND role = 'student'"
+  ).get(id);
+
+  if (!student) {
+    return res.status(404).json({ error: 'Murid tidak ditemukan.' });
+  }
+
+  try {
+    const attemptCount = Number(
+      db.prepare('SELECT COUNT(*) AS count FROM exam_attempts WHERE user_id = ?').get(id).count
+    );
+    const violationCount = Number(
+      db.prepare('SELECT COUNT(*) AS count FROM violation_logs WHERE user_id = ?').get(id).count
+    );
+
+    if (attemptCount > 0 || violationCount > 0) {
+      return res.status(409).json({
+        error: `Murid ${student.full_name} memiliki riwayat ujian atau pelanggaran (${attemptCount} riwayat ujian, ${violationCount} catatan pelanggaran). Untuk menjaga nilai, jawaban, dan audit, akun ini tidak dapat dihapus permanen dari menu ini. Nonaktifkan akun atau pertahankan data murid tersebut agar riwayat tetap aman.`
+      });
+    }
+
+    const result = db.prepare("DELETE FROM users WHERE id = ? AND role = 'student'").run(id);
+    if (!result.changes) {
+      return res.status(404).json({ error: 'Murid tidak ditemukan atau sudah dihapus.' });
+    }
+
+    logAudit(req.user.id, 'DELETE_STUDENT', `Menghapus murid ${student.full_name} (${student.username}) tanpa riwayat ujian`, req.ip);
+    return res.json({ message: `Murid ${student.full_name} berhasil dihapus.` });
+  } catch (err) {
+    const message = String(err?.message || '');
+    if (/foreign key|constraint/i.test(message) || /SQLITE_CONSTRAINT/i.test(String(err?.code || ''))) {
+      return res.status(409).json({
+        error: 'Murid masih terhubung dengan data lain dan tidak dapat dihapus permanen. Pertahankan atau nonaktifkan akun untuk menjaga integritas data.'
+      });
+    }
+    console.error('[CBTKU] Student deletion failed:', err);
+    return res.status(500).json({ error: 'Terjadi kesalahan saat menghapus murid.' });
+  }
+});
+
 router.post('/students/:id/reset-password', (req, res) => {
   const { id } = req.params;
   const initialPasswordHash = bcrypt.hashSync('siswa11', 10);
@@ -271,8 +334,13 @@ router.post('/students/import', upload.single('file'), (req, res) => {
 // --- 4. SUBJECTS CRUD ---
 router.get('/subjects', (req, res) => {
   const { search } = req.query;
+  const includeInactive = String(req.query.include_inactive || '').toLowerCase() === 'true';
   let sql = 'SELECT * FROM subjects WHERE 1=1';
   const params = [];
+
+  // Dropdowns and new exam setup show active subjects only. The Subjects page
+  // requests include_inactive=true so administrators can reactivate a subject.
+  if (!includeInactive) sql += " AND status = 'active'";
 
   if (search) {
     sql += ' AND (name LIKE ? OR code LIKE ?)';
@@ -305,31 +373,198 @@ router.post('/subjects', (req, res) => {
 router.put('/subjects/:id', (req, res) => {
   const { code, name, description, status } = req.body;
   const { id } = req.params;
+  if (!code || !String(code).trim() || !name || !String(name).trim()) {
+    return res.status(400).json({ error: 'Kode dan nama mata pelajaran wajib diisi.' });
+  }
+  if (status !== undefined && !['active', 'inactive'].includes(status)) {
+    return res.status(400).json({ error: 'Status mata pelajaran tidak valid.' });
+  }
+
   try {
+    const existing = db.prepare('SELECT id, status FROM subjects WHERE id = ?').get(id);
+    if (!existing) return res.status(404).json({ error: 'Mata pelajaran tidak ditemukan.' });
+
+    // Preserve the current status when editing ordinary fields. This prevents
+    // editing an inactive subject from accidentally reactivating it.
+    const nextStatus = status === undefined ? existing.status : status;
     db.prepare('UPDATE subjects SET code = ?, name = ?, description = ?, status = ? WHERE id = ?').run(
-      code.trim().toUpperCase(),
-      name.trim(),
+      String(code).trim().toUpperCase(),
+      String(name).trim(),
       description || '',
-      status || 'active',
+      nextStatus,
       id
     );
-    res.json({ message: 'Mata pelajaran berhasil diperbarui' });
+    logAudit(req.user.id, 'UPDATE_SUBJECT', `Memperbarui mata pelajaran id ${id}`, req.ip);
+    res.json({ message: 'Mata pelajaran berhasil diperbarui', status: nextStatus });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    if (err.message && err.message.includes('UNIQUE')) return res.status(400).json({ error: 'Kode mata pelajaran sudah digunakan.' });
+    res.status(500).json({ error: 'Gagal memperbarui mata pelajaran.' });
   }
 });
 
+// Explicit status endpoint: status changes are not permanent deletion.
+router.patch('/subjects/:id/status', (req, res) => {
+  const { id } = req.params;
+  const { status } = req.body || {};
+  if (!['active', 'inactive'].includes(status)) {
+    return res.status(400).json({ error: 'Status harus active atau inactive.' });
+  }
+
+  try {
+    const subject = db.prepare('SELECT id, name, status FROM subjects WHERE id = ?').get(id);
+    if (!subject) return res.status(404).json({ error: 'Mata pelajaran tidak ditemukan.' });
+
+    db.prepare('UPDATE subjects SET status = ? WHERE id = ?').run(status, id);
+    const verb = status === 'active' ? 'mengaktifkan' : 'menonaktifkan';
+    logAudit(req.user.id, status === 'active' ? 'ACTIVATE_SUBJECT' : 'DEACTIVATE_SUBJECT', `${verb} mata pelajaran ${subject.name} (id ${id})`, req.ip);
+    res.json({
+      message: status === 'active'
+        ? `Mata pelajaran "${subject.name}" berhasil diaktifkan.`
+        : `Mata pelajaran "${subject.name}" berhasil dinonaktifkan. Data soal dan riwayat ujian tetap disimpan.`,
+      status
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Gagal mengubah status mata pelajaran.' });
+  }
+});
+
+// Permanent deletion is separate from activation status. Only allow deletion
+// when no question or exam references the subject; otherwise ask admin to deactivate it.
 router.delete('/subjects/:id', (req, res) => {
   const { id } = req.params;
-  db.prepare("UPDATE subjects SET status = CASE WHEN status = 'active' THEN 'inactive' ELSE 'active' END WHERE id = ?").run(id);
-  res.json({ message: 'Status mata pelajaran berhasil diubah' });
+  try {
+    const subject = db.prepare('SELECT id, name FROM subjects WHERE id = ?').get(id);
+    if (!subject) return res.status(404).json({ error: 'Mata pelajaran tidak ditemukan.' });
+
+    const questionCount = Number(db.prepare('SELECT COUNT(*) AS count FROM questions WHERE subject_id = ?').get(id).count || 0);
+    const examCount = Number(db.prepare('SELECT COUNT(*) AS count FROM exams WHERE subject_id = ?').get(id).count || 0);
+
+    if (questionCount > 0 || examCount > 0) {
+      const reasons = [];
+      if (questionCount > 0) reasons.push(`${questionCount} soal`);
+      if (examCount > 0) reasons.push(`${examCount} ujian`);
+      return res.status(409).json({
+        error: `Mata pelajaran "${subject.name}" belum dapat dihapus karena masih digunakan oleh ${reasons.join(' dan ')}. Gunakan tombol Nonaktifkan jika mata pelajaran tidak ingin dipakai untuk penggunaan baru. Data soal dan riwayat ujian tetap aman.`
+      });
+    }
+
+    db.prepare('DELETE FROM subjects WHERE id = ?').run(id);
+    logAudit(req.user.id, 'DELETE_SUBJECT', `Menghapus permanen mata pelajaran ${subject.name} (id ${id})`, req.ip);
+    return res.json({ message: `Mata pelajaran "${subject.name}" berhasil dihapus permanen.` });
+  } catch (err) {
+    // Foreign-key constraints are the final guard against deleting referenced data.
+    if (String(err.message || '').toLowerCase().includes('foreign key') || String(err.code || '').includes('CONSTRAINT')) {
+      return res.status(409).json({ error: 'Mata pelajaran masih memiliki data terkait dan tidak dapat dihapus permanen. Gunakan Nonaktifkan agar data tetap aman.' });
+    }
+    console.error('Gagal menghapus mata pelajaran:', err);
+    return res.status(500).json({ error: 'Gagal menghapus mata pelajaran.' });
+  }
+});
+
+// Image URL validation. New uploads use private authenticated Cloudinary assets (`cloudinary://...`).
+// Existing direct URLs and legacy Base64 data URLs remain readable for compatibility.
+const MAX_QUESTION_IMAGE_DATA_URL_LENGTH = 650000; // legacy compatibility only; new uploads never store Base64 in Neon
+function validateQuestionImageUrl(imageUrl) {
+  if (imageUrl === undefined || imageUrl === null || imageUrl === '') return null;
+  if (typeof imageUrl !== 'string') throw new Error('Data gambar tidak valid.');
+
+  if (imageUrl.startsWith('cloudinary://')) {
+    cloudinaryPublicIdFromRef(imageUrl);
+    return imageUrl;
+  }
+  if (imageUrl.startsWith('r2://')) {
+    throw new Error('Gambar dari konfigurasi Cloudflare R2 lama perlu diunggah ulang ke Cloudinary.');
+  }
+
+  if (imageUrl.startsWith('data:')) {
+    if (!/^data:image\/(?:webp|jpeg|png);base64,[A-Za-z0-9+/]+={0,2}$/i.test(imageUrl)) {
+      throw new Error('Format gambar lama tidak didukung. Gunakan JPG, PNG, atau WebP.');
+    }
+    if (imageUrl.length > MAX_QUESTION_IMAGE_DATA_URL_LENGTH) {
+      throw new Error('Gambar lama terlalu besar. Pilih gambar yang lebih kecil.');
+    }
+    return imageUrl;
+  }
+
+  if (imageUrl.length > 2048) throw new Error('Link gambar terlalu panjang.');
+  if (imageUrl.startsWith('/uploads/')) {
+    if (imageUrl.includes('..')) throw new Error('Jalur gambar tidak valid.');
+    return imageUrl;
+  }
+  try {
+    const parsed = new URL(imageUrl);
+    if (!['https:', 'http:'].includes(parsed.protocol)) throw new Error('Protokol link gambar tidak valid.');
+    return imageUrl;
+  } catch (err) {
+    throw new Error('Masukkan link gambar lengkap yang diawali http:// atau https://.');
+  }
+}
+
+// Do not remove an old image if an active exam may still use it.
+// Also protect any image reference reused by another question or option.
+function cleanupUnusedQuestionImage(imageRef, questionId, hadActiveAttempt) {
+  if (!imageRef || !isCloudinaryImageRef(imageRef) || hadActiveAttempt) return;
+  try {
+    const questionRefs = db.prepare('SELECT COUNT(*) AS count FROM questions WHERE image_url = ?').get(imageRef).count;
+    const optionRefs = db.prepare('SELECT COUNT(*) AS count FROM question_options WHERE image_url = ?').get(imageRef).count;
+    if (questionRefs === 0 && optionRefs === 0) {
+      deleteStoredImage(imageRef).catch(err => console.error('[CBTKU Cloudinary] Old image cleanup failed:', err.message));
+    }
+  } catch (err) {
+    console.error('[CBTKU Cloudinary] Could not verify whether an old image is unused:', err.message);
+  }
+}
+
+function questionHasActiveAttempt(questionId) {
+  const result = db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM attempt_questions aq
+    JOIN exam_attempts a ON a.id = aq.attempt_id
+    WHERE aq.question_id = ? AND a.status IN ('in_progress', 'locked')
+  `).get(questionId);
+  return (result?.count || 0) > 0;
+}
+
+// Image uploads pass through this authenticated endpoint with a strict 500 KB hard limit.
+// The compressed payload remains far below Vercel's request-size ceiling; Neon stores only a reference.
+router.post('/questions/image-upload', (req, res, next) => {
+  questionImageUpload.single('image')(req, res, (err) => {
+    if (err) {
+      const message = err.code === 'LIMIT_FILE_SIZE'
+        ? 'Ukuran gambar setelah kompresi maksimal 500 KB.'
+        : (err.message || 'Unggahan gambar tidak valid.');
+      return res.status(400).json({ error: message });
+    }
+    next();
+  });
+}, async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Pilih file gambar terlebih dahulu.' });
+  try {
+    const uploaded = await uploadQuestionImage(req.file.buffer, req.file.mimetype);
+    const imageRef = `cloudinary://${uploaded.public_id}`;
+    const imageDisplayUrl = resolveImageDisplayUrl(imageRef);
+    logAudit(req.user.id, 'UPLOAD_QUESTION_IMAGE', 'Mengunggah gambar ilustrasi soal', req.ip);
+    res.status(201).json({
+      image_url: imageRef,
+      image_display_url: imageDisplayUrl,
+      bytes: uploaded.bytes,
+      format: uploaded.format
+    });
+  } catch (err) {
+    const message = err?.message || 'Tidak dapat menyimpan gambar ke Cloudinary.';
+    const status = /belum dikonfigurasi/i.test(message) ? 503 : 400;
+    if (status === 503) console.error('[CBTKU Cloudinary] Configuration missing:', message);
+    else console.error('[CBTKU Cloudinary] Upload failed:', message);
+    res.status(status).json({ error: status === 503 ? message : `Gagal menyimpan gambar: ${message}` });
+  }
 });
 
 // --- 5. QUESTION BANK CRUD & IMPORT (ALL 5 TYPES) ---
 router.get('/questions', (req, res) => {
   const { subject_id, type, search } = req.query;
   let sql = `
-    SELECT q.*, s.name as subject_name, s.code as subject_code
+    SELECT q.id, q.subject_id, q.type, q.question_text, q.weight, q.answer_key,
+           q.rubric, q.status, q.created_at, s.name as subject_name, s.code as subject_code
     FROM questions q
     JOIN subjects s ON q.subject_id = s.id
     WHERE 1=1
@@ -352,17 +587,12 @@ router.get('/questions', (req, res) => {
   sql += ' ORDER BY q.id DESC';
   const questions = db.prepare(sql).all(...params);
 
-  // Attach options for each question
-  const optStmt = db.prepare('SELECT * FROM question_options WHERE question_id = ? ORDER BY order_num ASC');
-  const enriched = questions.map(q => ({
-    ...q,
-    options: optStmt.all(q.id)
-  }));
-
-  res.json({ questions: enriched });
+  // List payload deliberately excludes image_url and options. Fetch them from /questions/:id
+  // only when an administrator opens a question, keeping the bank fast even with many images.
+  res.json({ questions: questions.map(q => ({ ...q, image_url: null, options: [] })) });
 });
 
-router.get('/questions/:id', (req, res) => {
+router.get('/questions/:id', async (req, res) => {
   const { id } = req.params;
   const q = db.prepare(`
     SELECT q.*, s.name as subject_name
@@ -373,12 +603,28 @@ router.get('/questions/:id', (req, res) => {
 
   if (!q) return res.status(404).json({ error: 'Soal tidak ditemukan' });
 
-  const options = db.prepare('SELECT * FROM question_options WHERE question_id = ? ORDER BY order_num ASC').all(id);
-  res.json({ question: { ...q, options } });
+  try {
+    const options = db.prepare('SELECT * FROM question_options WHERE question_id = ? ORDER BY order_num ASC').all(id);
+    const imageDisplayUrl = await resolveImageDisplayUrl(q.image_url);
+    const displayOptions = await Promise.all(options.map(async (option) => ({
+      ...option,
+      image_display_url: await resolveImageDisplayUrl(option.image_url)
+    })));
+    res.json({ question: { ...q, image_display_url: imageDisplayUrl, options: displayOptions } });
+  } catch (err) {
+    console.error('[CBTKU Cloudinary] Could not prepare question image URL:', err);
+    res.status(503).json({ error: 'Gambar soal belum dapat disiapkan. Periksa konfigurasi penyimpanan gambar pada server.' });
+  }
 });
 
 router.post('/questions', (req, res) => {
   const { subject_id, type, question_text, image_url, weight, answer_key, rubric, options } = req.body;
+  let safeImageUrl;
+  try {
+    safeImageUrl = validateQuestionImageUrl(image_url);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
   if (!subject_id || !type || !question_text || answer_key === undefined) {
     return res.status(400).json({ error: 'Mata pelajaran, jenis soal, teks soal, dan kunci jawaban wajib diisi' });
   }
@@ -393,7 +639,7 @@ router.post('/questions', (req, res) => {
   const info = db.prepare(`
     INSERT INTO questions (subject_id, type, question_text, image_url, weight, answer_key, rubric, status)
     VALUES (?, ?, ?, ?, ?, ?, ?, 'active')
-  `).run(subject_id, type, question_text, image_url || null, weight || 1.0, ansKeyStr, rubric || null);
+  `).run(subject_id, type, question_text, safeImageUrl, weight || 1.0, ansKeyStr, rubric || null);
 
   const qId = info.lastInsertRowid;
 
@@ -414,6 +660,16 @@ router.post('/questions', (req, res) => {
 router.put('/questions/:id', (req, res) => {
   const { id } = req.params;
   const { subject_id, type, question_text, image_url, weight, answer_key, rubric, options } = req.body;
+  let safeImageUrl;
+  try {
+    safeImageUrl = validateQuestionImageUrl(image_url);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+
+  const existingQuestion = db.prepare('SELECT id, image_url FROM questions WHERE id = ?').get(id);
+  if (!existingQuestion) return res.status(404).json({ error: 'Soal tidak ditemukan.' });
+  const hadActiveAttempt = questionHasActiveAttempt(id);
 
   const ansKeyStr = typeof answer_key === 'object' ? JSON.stringify(answer_key) : String(answer_key);
 
@@ -421,7 +677,7 @@ router.put('/questions/:id', (req, res) => {
     UPDATE questions
     SET subject_id = ?, type = ?, question_text = ?, image_url = ?, weight = ?, answer_key = ?, rubric = ?
     WHERE id = ?
-  `).run(subject_id, type, question_text, image_url || null, weight || 1.0, ansKeyStr, rubric || null, id);
+  `).run(subject_id, type, question_text, safeImageUrl, weight || 1.0, ansKeyStr, rubric || null, id);
 
   if (Array.isArray(options)) {
     db.prepare('DELETE FROM question_options WHERE question_id = ?').run(id);
@@ -434,13 +690,22 @@ router.put('/questions/:id', (req, res) => {
     });
   }
 
+  // Clean up only if no running/locked attempt may still be using a temporary URL.
+  if (existingQuestion.image_url && existingQuestion.image_url !== safeImageUrl) {
+    cleanupUnusedQuestionImage(existingQuestion.image_url, id, hadActiveAttempt);
+  }
+
   logAudit(req.user.id, 'UPDATE_QUESTION', `Update soal id ${id}`, req.ip);
   res.json({ message: 'Soal berhasil diperbarui' });
 });
 
 router.delete('/questions/:id', (req, res) => {
   const { id } = req.params;
+  const existingQuestion = db.prepare('SELECT id, image_url FROM questions WHERE id = ?').get(id);
+  if (!existingQuestion) return res.status(404).json({ error: 'Soal tidak ditemukan.' });
+  const hadActiveAttempt = questionHasActiveAttempt(id);
   db.prepare('DELETE FROM questions WHERE id = ?').run(id);
+  cleanupUnusedQuestionImage(existingQuestion.image_url, id, hadActiveAttempt);
   res.json({ message: 'Soal berhasil dihapus' });
 });
 
