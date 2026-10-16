@@ -1,11 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, lazy, Suspense } from 'react';
 import { Header } from '../../components/Header';
-import { StudentPortal } from './StudentPortal';
-import { PreExamScreen } from './PreExamScreen';
-import { ExamWorkstation } from './ExamWorkstation';
-import { ExamResultScreen } from './ExamResultScreen';
+
+
+
+
 import { Exam } from '../../types';
 
+const StudentPortal = lazy(() => import('./StudentPortal').then(m => ({ default: m.StudentPortal })));
+const PreExamScreen = lazy(() => import('./PreExamScreen').then(m => ({ default: m.PreExamScreen })));
+const ExamWorkstation = lazy(() => import('./ExamWorkstation').then(m => ({ default: m.ExamWorkstation })));
+const ExamResultScreen = lazy(() => import('./ExamResultScreen').then(m => ({ default: m.ExamResultScreen })));
 export const StudentLayout: React.FC = () => {
   const [currentStage, setCurrentStage] = useState<'portal' | 'pre_exam' | 'workstation' | 'result'>('portal');
   const [activeExam, setActiveExam] = useState<Exam | null>(null);
@@ -48,34 +52,36 @@ export const StudentLayout: React.FC = () => {
       {currentStage !== 'workstation' && <Header />}
 
       <main style={{ flex: 1 }}>
-        {currentStage === 'portal' && (
-          <StudentPortal
-            onStartExam={handleStartExam}
-            onViewResult={handleViewResult}
-          />
-        )}
+        <Suspense fallback={<div role="status" aria-live="polite" style={{ padding: '1.5rem' }}>Memuat halaman...</div>}>
+          {currentStage === 'portal' && (
+            <StudentPortal
+              onStartExam={handleStartExam}
+              onViewResult={handleViewResult}
+            />
+          )}
 
-        {currentStage === 'pre_exam' && activeExam && (
-          <PreExamScreen
-            exam={activeExam}
-            onBack={handleBackToPortal}
-            onProceedToWorkstation={handleProceedToWorkstation}
-          />
-        )}
+          {currentStage === 'pre_exam' && activeExam && (
+            <PreExamScreen
+              exam={activeExam}
+              onBack={handleBackToPortal}
+              onProceedToWorkstation={handleProceedToWorkstation}
+            />
+          )}
 
-        {currentStage === 'workstation' && activeAttemptId && (
-          <ExamWorkstation
-            attemptId={activeAttemptId}
-            onFinishExam={handleFinishExam}
-          />
-        )}
+          {currentStage === 'workstation' && activeAttemptId && (
+            <ExamWorkstation
+              attemptId={activeAttemptId}
+              onFinishExam={handleFinishExam}
+            />
+          )}
 
-        {currentStage === 'result' && activeAttemptId && (
-          <ExamResultScreen
-            attemptId={activeAttemptId}
-            onBackToPortal={handleBackToPortal}
-          />
-        )}
+          {currentStage === 'result' && activeAttemptId && (
+            <ExamResultScreen
+              attemptId={activeAttemptId}
+              onBackToPortal={handleBackToPortal}
+            />
+          )}
+        </Suspense>
       </main>
     </div>
   );

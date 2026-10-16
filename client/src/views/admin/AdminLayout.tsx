@@ -1,19 +1,28 @@
-import React, { useState } from 'react';
+import React, { useState, lazy, Suspense } from 'react';
 import { Header } from '../../components/Header';
-import { AdminDashboard } from './AdminDashboard';
-import { ClassesAndStudents } from './ClassesAndStudents';
-import { SubjectsView } from './SubjectsView';
-import { QuestionBankView } from './QuestionBankView';
-import { ExamsManagementView } from './ExamsManagementView';
-import { LiveProctorView } from './LiveProctorView';
-import { GradingAndResultsView } from './GradingAndResultsView';
-import { SebConfigView } from './SebConfigView';
-import { AuditLogsView } from './AuditLogsView';
+
+
+
+
+
+
+
+
+
 import {
   LayoutDashboard, Users, BookOpen, HelpCircle,
   FileText, Radio, Award, Shield, Layers
 } from 'lucide-react';
 
+const AdminDashboard = lazy(() => import('./AdminDashboard').then(m => ({ default: m.AdminDashboard })));
+const ClassesAndStudents = lazy(() => import('./ClassesAndStudents').then(m => ({ default: m.ClassesAndStudents })));
+const SubjectsView = lazy(() => import('./SubjectsView').then(m => ({ default: m.SubjectsView })));
+const QuestionBankView = lazy(() => import('./QuestionBankView').then(m => ({ default: m.QuestionBankView })));
+const ExamsManagementView = lazy(() => import('./ExamsManagementView').then(m => ({ default: m.ExamsManagementView })));
+const LiveProctorView = lazy(() => import('./LiveProctorView').then(m => ({ default: m.LiveProctorView })));
+const GradingAndResultsView = lazy(() => import('./GradingAndResultsView').then(m => ({ default: m.GradingAndResultsView })));
+const SebConfigView = lazy(() => import('./SebConfigView').then(m => ({ default: m.SebConfigView })));
+const AuditLogsView = lazy(() => import('./AuditLogsView').then(m => ({ default: m.AuditLogsView })));
 export const AdminLayout: React.FC = () => {
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [proctorExamId, setProctorExamId] = useState<number | undefined>(undefined);
@@ -120,15 +129,17 @@ export const AdminLayout: React.FC = () => {
 
         {/* Main Content Area */}
         <main className="main-content">
-          {activeTab === 'dashboard' && <AdminDashboard onNavigate={setActiveTab} />}
-          {activeTab === 'students' && <ClassesAndStudents />}
-          {activeTab === 'subjects' && <SubjectsView />}
-          {activeTab === 'questions' && <QuestionBankView />}
-          {activeTab === 'exams' && <ExamsManagementView onNavigateToProctor={handleNavigateToProctor} />}
-          {activeTab === 'proctor' && <LiveProctorView initialExamId={proctorExamId} />}
-          {activeTab === 'grading' && <GradingAndResultsView />}
-          {activeTab === 'seb' && <SebConfigView />}
-          {activeTab === 'audit' && <AuditLogsView />}
+          <Suspense fallback={<div role="status" aria-live="polite" style={{ padding: '1.5rem' }}>Memuat halaman...</div>}>
+            {activeTab === 'dashboard' && <AdminDashboard onNavigate={setActiveTab} />}
+            {activeTab === 'students' && <ClassesAndStudents />}
+            {activeTab === 'subjects' && <SubjectsView />}
+            {activeTab === 'questions' && <QuestionBankView />}
+            {activeTab === 'exams' && <ExamsManagementView onNavigateToProctor={handleNavigateToProctor} />}
+            {activeTab === 'proctor' && <LiveProctorView initialExamId={proctorExamId} />}
+            {activeTab === 'grading' && <GradingAndResultsView />}
+            {activeTab === 'seb' && <SebConfigView />}
+            {activeTab === 'audit' && <AuditLogsView />}
+          </Suspense>
         </main>
       </div>
     </div>
